@@ -90,15 +90,11 @@ func (r *Ring) SQSize() int {
 }
 
 func (r *Ring) SQSlots() int {
-	head := atomic.LoadUint32(r.sq.head)
-	return int(*r.sq.ringEntries) - int(r.sq.sqeTail-head)
+	return int(*r.sq.ringEntries - r.sq.sqeTail - atomic.LoadUint32(r.sq.head))
 }
 
 func (r *Ring) CQSlots() int {
-	head := *r.cq.head
-	tail := atomic.LoadUint32(r.cq.tail)
-	delta := tail - head
-	return int(*r.cq.ringEntries - delta)
+	return int(*r.cq.ringEntries - atomic.LoadUint32(r.cq.tail) - *r.cq.head)
 }
 
 func (r *Ring) Push(sqes ...SQEntry) uint32 {

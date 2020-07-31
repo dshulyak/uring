@@ -142,7 +142,6 @@ func TestCopy(t *testing.T) {
 	)
 	for {
 		// TODO Readv with IOCQE_IO_LINK makes Writev fail with 'file too large'
-		// maybe this is not a valid sequence of sqe's
 		Readv(&read, from.Fd(), vector, offset, 0)
 		//read.SetFlags(IOSQE_IO_LINK)
 		Writev(&write, to.Fd(), vector, offset, 0)
@@ -152,7 +151,7 @@ func TestCopy(t *testing.T) {
 		require.NoError(t, err)
 		rcqe, err := ring.GetCQEntry(0)
 		require.NoError(t, err)
-		require.True(t, rcqe.Result() >= 0, "%d ('%v')", rcqe.Result(), syscall.Errno(-rcqe.Result()))
+		require.True(t, rcqe.Result() >= 0, "read result %d ('%v')", rcqe.Result(), syscall.Errno(-rcqe.Result()))
 
 		ret := rcqe.Result()
 		if ret == 0 {
@@ -163,7 +162,7 @@ func TestCopy(t *testing.T) {
 		require.NoError(t, err)
 		wcqe, err := ring.GetCQEntry(0)
 		require.NoError(t, err)
-		require.Equal(t, ret, wcqe.Result(), "%d ('%v')", wcqe.Result(), syscall.Errno(-wcqe.Result()))
+		require.Equal(t, ret, wcqe.Result(), "write result %d ('%v')", wcqe.Result(), syscall.Errno(-wcqe.Result()))
 
 		offset += rlth
 	}
@@ -208,4 +207,37 @@ func TestNoEnter(t *testing.T) {
 		}
 	}
 	require.FailNow(t, "nop operation wasn't completed")
+}
+
+func TestResubmitBeforeCompletion(t *testing.T) {
+	n := 32
+	ring, err := Setup(n, nil)
+	require.NoError(t, err)
+	defer ring.Close()
+
+	for round := 0; round < 2; round++ {
+		// sq entry can be reused after call to Submit returned
+		for i := uint64(1); i <= uint64(n); i++ {
+			var sqe SQEntry
+			Nop(&sqe)
+			sqe.SetUserData(i)
+			ring.Push(sqe)
+		}
+
+		_, err = ring.Submit(uint32(n), 0)
+		require.NoError(t, err)
+	}
+	for round := 0; round < 2; round++ {
+		for i := uint64(1); i <= uint64(n); i++ {
+			for {
+				cqe, err := ring.GetCQEntry(0)
+				if err != nil {
+					continue
+				}
+				require.Equal(t, i, cqe.UserData())
+				break
+			}
+		}
+	}
+
 }
