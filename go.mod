@@ -1,4 +1,4 @@
-module github.com/dshulyak/io-uring
+module github.com/dshulyak/uring
 
 go 1.14
 
