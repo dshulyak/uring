@@ -81,20 +81,20 @@ type Ring struct {
 	sqArrayData []byte
 }
 
-func (r *Ring) CQSize() int {
-	return int(r.params.CQEntries)
+func (r *Ring) CQSize() uint32 {
+	return r.params.CQEntries
 }
 
-func (r *Ring) SQSize() int {
-	return int(r.params.SQEntries)
+func (r *Ring) SQSize() uint32 {
+	return r.params.SQEntries
 }
 
-func (r *Ring) SQSlots() int {
-	return int(*r.sq.ringEntries - r.sq.sqeTail - atomic.LoadUint32(r.sq.head))
+func (r *Ring) SQSlots() uint32 {
+	return *r.sq.ringEntries - r.sq.sqeTail - atomic.LoadUint32(r.sq.head)
 }
 
-func (r *Ring) CQSlots() int {
-	return int(*r.cq.ringEntries - atomic.LoadUint32(r.cq.tail) - *r.cq.head)
+func (r *Ring) CQSlots() uint32 {
+	return *r.cq.ringEntries - atomic.LoadUint32(r.cq.tail) - *r.cq.head
 }
 
 func (r *Ring) Push(sqes ...SQEntry) uint32 {
@@ -192,7 +192,10 @@ func (r *Ring) peekCQEntry() (CQEntry, bool) {
 }
 
 func (r *Ring) cqNeedsEnter() bool {
-	return atomic.LoadUint32(r.cq.flags)&IORING_SQ_CQ_OVERFLOW > 0
+	if atomic.LoadUint32(r.cq.flags)&IORING_SQ_CQ_OVERFLOW > 0 {
+		return true
+	}
+	return r.params.Flags&IORING_SETUP_IOPOLL > 0
 }
 
 func (r *Ring) sqNeedsEnter(submitted uint32, flags *uint32) bool {
