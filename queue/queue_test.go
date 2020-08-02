@@ -59,7 +59,7 @@ func benchmarkWrite(b *testing.B, size uint64, n int) {
 			pprof.Lookup("goroutine").WriteTo(os.Stdout, 1)
 		}()
 	*/
-	ring, err := uring.Setup(2, nil)
+	ring, err := uring.Setup(32, nil)
 	require.NoError(b, err)
 	defer ring.Close()
 	queue := New(ring)
