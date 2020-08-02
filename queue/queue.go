@@ -45,6 +45,10 @@ func New(ring *uring.Ring) *Queue {
 }
 
 // Queue synchronizes access to uring.Ring instance.
+// Future optimizations:
+// - use lock-free buffer for submitting requests
+//   will allow to submit entries in a batch, and avoid channel mutex
+// - park completion loop only after a period of inactivity
 type Queue struct {
 	wg   sync.WaitGroup
 	quit chan struct{}
