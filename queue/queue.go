@@ -2,7 +2,6 @@ package queue
 
 import (
 	"errors"
-	"math"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -83,6 +82,7 @@ func (q *Queue) completionLoop() {
 			}
 		}
 		cqe, err := q.ring.GetCQEntry(0)
+
 		if err == syscall.EAGAIN || err == syscall.EINTR {
 			continue
 		} else if err != nil {
@@ -90,7 +90,7 @@ func (q *Queue) completionLoop() {
 			panic(err)
 		}
 		q.compls <- cqe
-		atomic.AddUint32(q.subCount, math.MaxUint32)
+		atomic.AddUint32(q.subCount, ^uint32(0))
 	}
 }
 
@@ -103,24 +103,22 @@ func (q *Queue) submitionLoop() {
 		nonce   uint64
 	)
 	for {
+		if limit == 0 {
+			active = nil
+		} else {
+			active = q.subms
+		}
 		select {
 		case cqe := <-q.compls:
 			results[cqe.UserData()] <- cqe
 			delete(results, cqe.UserData())
-			if limit == 0 {
-				active = q.subms
-			}
 			limit++
 		case req := <-active:
 			limit--
-			if limit == 0 {
-				active = nil
-			}
 
 			sqe := req.sqe
 			sqe.SetUserData(nonce)
 			results[nonce] = req.cqe
-			nonce++
 
 			total := q.ring.Push(sqe)
 			_, err := q.ring.Submit(total, 0)
@@ -129,11 +127,14 @@ func (q *Queue) submitionLoop() {
 				// FIXME
 				panic(err)
 			}
-			prev := atomic.LoadUint32(q.subCount)
-			atomic.AddUint32(q.subCount, total)
-			if prev == 0 {
+
+			// completionLoop will block on wakeC only after LoadUint32
+			// returned 0
+			if atomic.AddUint32(q.subCount, total) == total {
 				q.wakeC <- struct{}{}
 			}
+
+			nonce++
 		case <-q.quit:
 			return
 		}

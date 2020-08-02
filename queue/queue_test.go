@@ -70,7 +70,6 @@ func benchmarkWrite(b *testing.B, size uint64, n int) {
 	defer os.Remove(f.Name())
 
 	data := make([]byte, size)
-
 	vector := []syscall.Iovec{
 		{
 			Base: &data[0],
@@ -107,6 +106,9 @@ func benchmarkWrite(b *testing.B, size uint64, n int) {
 func BenchmarkWrite(b *testing.B) {
 	b.Run("w32_4kb", func(b *testing.B) {
 		benchmarkWrite(b, 4<<10, 32)
+	})
+	b.Run("w2_4kb", func(b *testing.B) {
+		benchmarkWrite(b, 4<<10, 2)
 	})
 	b.Run("w32_10mb", func(b *testing.B) {
 		benchmarkWrite(b, 10<<20, 32)
