@@ -11,27 +11,32 @@ import (
 
 var Closed = errors.New("closed")
 
-var completionPool = sync.Pool{
+var requestPool = sync.Pool{
 	New: func() interface{} {
-		return make(chan uring.CQEntry, 1)
+		mu := sync.Mutex{}
+		return &request{
+			cond: sync.NewCond(&mu),
+		}
 	},
 }
 
 type request struct {
 	sqe uring.SQEntry
-	cqe chan uring.CQEntry
+
+	cond *sync.Cond
+	cqe  uring.CQEntry
 }
 
 func New(ring *uring.Ring) *Queue {
 	var inflight uint32
 	q := &Queue{
-		requests: make(chan request, ring.SQSize()),
+		requests: make(chan *request, ring.SQSize()),
 		quit:     make(chan struct{}),
 		inflight: &inflight,
 		wakeC:    make(chan struct{}, 1),
 		wakeS:    make(chan struct{}, 1),
 		ring:     ring,
-		results:  make(map[uint64]chan uring.CQEntry, ring.CQSize()),
+		results:  make(map[uint64]*request, ring.CQSize()),
 	}
 	q.wg.Add(2)
 	go q.completionLoop()
@@ -44,10 +49,10 @@ type Queue struct {
 	wg   sync.WaitGroup
 	quit chan struct{}
 
-	requests chan request
+	requests chan *request
 
 	rmu     sync.Mutex
-	results map[uint64]chan uring.CQEntry
+	results map[uint64]*request
 
 	inflight     *uint32
 	wakeC, wakeS chan struct{}
@@ -56,19 +61,18 @@ type Queue struct {
 }
 
 func (q *Queue) Complete(sqe uring.SQEntry) (uring.CQEntry, error) {
-	req := request{
-		sqe: sqe,
-		cqe: completionPool.Get().(chan uring.CQEntry),
-	}
+	req := requestPool.Get().(*request)
+	req.sqe = sqe
+
+	req.cond.L.Lock()
 	select {
 	case q.requests <- req:
-		select {
-		case cqe := <-req.cqe:
-			completionPool.Put(req.cqe)
-			return cqe, nil
-		case <-q.quit:
-			return uring.CQEntry{}, Closed
-		}
+		req.cond.Wait()
+		cqe := req.cqe
+		req.cond.L.Unlock()
+
+		requestPool.Put(req)
+		return cqe, nil
 	case <-q.quit:
 		return uring.CQEntry{}, Closed
 	}
@@ -93,11 +97,14 @@ func (q *Queue) completionLoop() {
 		}
 
 		q.rmu.Lock()
-		result := q.results[cqe.UserData()]
+		req := q.results[cqe.UserData()]
 		delete(q.results, cqe.UserData())
 		q.rmu.Unlock()
 
-		result <- cqe
+		req.cond.L.Lock()
+		req.cqe = cqe
+		req.cond.Signal()
+		req.cond.L.Unlock()
 
 		switch atomic.AddUint32(q.inflight, ^uint32(0)) {
 		case wake:
@@ -115,7 +122,7 @@ func (q *Queue) completionLoop() {
 func (q *Queue) submitionLoop() {
 	defer q.wg.Done()
 	var (
-		active chan request = q.requests
+		active chan *request = q.requests
 		nonce  uint64
 	)
 	for {
@@ -127,7 +134,7 @@ func (q *Queue) submitionLoop() {
 			sqe.SetUserData(nonce)
 
 			q.rmu.Lock()
-			q.results[nonce] = req.cqe
+			q.results[nonce] = req
 			q.rmu.Unlock()
 
 			total := q.ring.Push(sqe)
