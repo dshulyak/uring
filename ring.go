@@ -90,11 +90,15 @@ func (r *Ring) SQSize() uint32 {
 }
 
 func (r *Ring) SQSlots() uint32 {
-	return *r.sq.ringEntries - r.sq.sqeTail - atomic.LoadUint32(r.sq.head)
+	return *r.sq.ringEntries - (r.sq.sqeTail - atomic.LoadUint32(r.sq.head))
 }
 
 func (r *Ring) CQSlots() uint32 {
-	return *r.cq.ringEntries - atomic.LoadUint32(r.cq.tail) - *r.cq.head
+	return *r.cq.ringEntries - (atomic.LoadUint32(r.cq.tail) - *r.cq.head)
+}
+
+func (r *Ring) Dropped() uint32 {
+	return atomic.LoadUint32(r.sq.dropped)
 }
 
 func (r *Ring) Push(sqes ...SQEntry) uint32 {
@@ -113,8 +117,24 @@ func (r *Ring) Push(sqes ...SQEntry) uint32 {
 	return i
 }
 
+func (r *Ring) flushSq() {
+	toSubmit := r.sq.sqeTail - r.sq.sqeHead
+	if toSubmit == 0 {
+		return
+	}
+
+	tail := *r.sq.tail
+	mask := *r.sq.ringMask
+	for ; toSubmit > 0; toSubmit-- {
+		r.sq.array.set(tail&mask, r.sq.sqeHead&mask)
+		tail++
+		r.sq.sqeHead++
+	}
+	atomic.StoreUint32(r.sq.tail, tail)
+}
+
 // Submit and wait for specified number of entries.
-func (r *Ring) Submit(submitted uint32, minComplete uint32) (int, error) {
+func (r *Ring) Submit(submitted uint32, minComplete uint32) (uint32, error) {
 	// TODO get the actual number of submitted records from flushed sq
 	r.flushSq()
 	var flags uint32
@@ -156,28 +176,12 @@ func (r *Ring) GetCQEntry(minComplete uint32) (CQEntry, error) {
 	panic("unreachable")
 }
 
-func (r *Ring) enter(submitted, minComplete, flags uint32) (int, error) {
+func (r *Ring) enter(submitted, minComplete, flags uint32) (uint32, error) {
 	r1, _, errno := syscall.Syscall6(IO_URING_ENTER, uintptr(r.fd), uintptr(submitted), uintptr(minComplete), uintptr(flags), 0, 0)
 	if errno == 0 {
-		return int(r1), nil
+		return uint32(r1), nil
 	}
-	return int(r1), error(errno)
-}
-
-func (r *Ring) flushSq() {
-	if r.sq.sqeTail == r.sq.sqeHead {
-		return
-	}
-
-	tail := *r.sq.tail
-	mask := *r.sq.ringMask
-	toSubmit := r.sq.sqeTail - r.sq.sqeHead
-	for ; toSubmit > 0; toSubmit-- {
-		r.sq.array.set(tail&mask, r.sq.sqeHead&mask)
-		tail++
-		r.sq.sqeHead++
-	}
-	atomic.StoreUint32(r.sq.tail, tail)
+	return uint32(r1), error(errno)
 }
 
 // peekCQEntry returns cqe is available and updates head
@@ -192,7 +196,7 @@ func (r *Ring) peekCQEntry() (CQEntry, bool) {
 }
 
 func (r *Ring) cqNeedsEnter() bool {
-	if atomic.LoadUint32(r.cq.flags)&IORING_SQ_CQ_OVERFLOW > 0 {
+	if r.cq.flags != nil && atomic.LoadUint32(r.cq.flags)&IORING_SQ_CQ_OVERFLOW > 0 {
 		return true
 	}
 	return r.params.Flags&IORING_SETUP_IOPOLL > 0

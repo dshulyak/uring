@@ -2,7 +2,9 @@ package queue
 
 import (
 	"errors"
+	"math"
 	"sync"
+	"sync/atomic"
 	"syscall"
 
 	"github.com/dshulyak/uring"
@@ -10,17 +12,26 @@ import (
 
 var Closed = errors.New("closed")
 
+var completionPool = sync.Pool{
+	New: func() interface{} {
+		return make(chan uring.CQEntry, 1)
+	},
+}
+
 type request struct {
 	sqe uring.SQEntry
 	cqe chan uring.CQEntry
 }
 
 func New(ring *uring.Ring) *Queue {
+	var subCount uint32
 	q := &Queue{
-		subms:  make(chan request, ring.SQSize()),
-		compls: make(chan uring.CQEntry, ring.CQSize()),
-		quit:   make(chan struct{}),
-		ring:   ring,
+		subms:    make(chan request, ring.SQSize()),
+		compls:   make(chan uring.CQEntry, ring.CQSize()),
+		quit:     make(chan struct{}),
+		subCount: &subCount,
+		wakeC:    make(chan struct{}, 1),
+		ring:     ring,
 	}
 	q.wg.Add(2)
 	go q.completionLoop()
@@ -29,11 +40,6 @@ func New(ring *uring.Ring) *Queue {
 }
 
 // Queue synchronizes access to uring.Ring instance.
-// Goals:
-// - goroutines that are waiting must be parked
-// - should not overflow uring completion queue
-// - completion entries must be returned as soon as they are available
-// - available submission entries should be submitted in one batch
 type Queue struct {
 	wg   sync.WaitGroup
 	quit chan struct{}
@@ -41,18 +47,22 @@ type Queue struct {
 	subms  chan request
 	compls chan uring.CQEntry
 
+	subCount *uint32
+	wakeC    chan struct{}
+
 	ring *uring.Ring
 }
 
 func (q *Queue) Complete(sqe uring.SQEntry) (uring.CQEntry, error) {
 	req := request{
 		sqe: sqe,
-		cqe: make(chan uring.CQEntry, 1),
+		cqe: completionPool.Get().(chan uring.CQEntry),
 	}
 	select {
 	case q.subms <- req:
 		select {
 		case cqe := <-req.cqe:
+			completionPool.Put(req.cqe)
 			return cqe, nil
 		case <-q.quit:
 			return uring.CQEntry{}, Closed
@@ -65,18 +75,22 @@ func (q *Queue) Complete(sqe uring.SQEntry) (uring.CQEntry, error) {
 func (q *Queue) completionLoop() {
 	defer q.wg.Done()
 	for {
-		select {
-		case <-q.quit:
-			return
-		default:
+		if atomic.LoadUint32(q.subCount) == 0 {
+			select {
+			case <-q.quit:
+				return
+			case <-q.wakeC:
+			}
 		}
 		cqe, err := q.ring.GetCQEntry(0)
-		if errors.Is(err, syscall.EAGAIN) {
+		if err == syscall.EAGAIN || err == syscall.EINTR {
 			continue
 		} else if err != nil {
+			// FIXME
 			panic(err)
 		}
 		q.compls <- cqe
+		atomic.AddUint32(q.subCount, math.MaxUint32)
 	}
 }
 
@@ -86,7 +100,6 @@ func (q *Queue) submitionLoop() {
 		results              = map[uint64]chan uring.CQEntry{}
 		active  chan request = q.subms
 		limit                = q.ring.CQSize()
-		sqsize               = q.ring.SQSize()
 		nonce   uint64
 	)
 	for {
@@ -99,34 +112,27 @@ func (q *Queue) submitionLoop() {
 			}
 			limit++
 		case req := <-active:
-			var total uint32
-			for {
-				limit--
-				sqe := req.sqe
-				sqe.SetUserData(nonce)
-				results[nonce] = req.cqe
-				nonce++
-				total += q.ring.Push(sqe)
-				if limit == 0 {
-					active = nil
-					break
-				}
-				if total == sqsize {
-					break
-				}
-				exit := false
-				select {
-				case req = <-active:
-				default:
-					exit = true
-				}
-				if exit {
-					break
-				}
+			limit--
+			if limit == 0 {
+				active = nil
 			}
+
+			sqe := req.sqe
+			sqe.SetUserData(nonce)
+			results[nonce] = req.cqe
+			nonce++
+
+			total := q.ring.Push(sqe)
 			_, err := q.ring.Submit(total, 0)
+
 			if err != nil {
+				// FIXME
 				panic(err)
+			}
+			prev := atomic.LoadUint32(q.subCount)
+			atomic.AddUint32(q.subCount, total)
+			if prev == 0 {
+				q.wakeC <- struct{}{}
 			}
 		case <-q.quit:
 			return

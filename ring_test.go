@@ -1,6 +1,7 @@
 package uring
 
 import (
+	"fmt"
 	"io/ioutil"
 	"math/rand"
 	"syscall"
@@ -240,4 +241,37 @@ func TestResubmitBeforeCompletion(t *testing.T) {
 		}
 	}
 
+}
+
+func TestSlowWrite(t *testing.T) {
+	f, err := ioutil.TempFile("", "writev-tests-")
+	require.NoError(t, err)
+	defer f.Close()
+
+	ring, err := Setup(2, nil)
+	require.NoError(t, err)
+	defer ring.Close()
+
+	data := make([]byte, 4<<10)
+	vector := []syscall.Iovec{
+		{
+			Base: &data[0],
+			Len:  uint64(len(data)),
+		},
+	}
+	var sqe1, sqe2 SQEntry
+	Writev(&sqe1, f.Fd(), vector, 0, 0)
+	sqe1.SetUserData(1)
+	Writev(&sqe2, f.Fd(), vector, 0, 0)
+	sqe2.SetUserData(2)
+
+	ring.Push(sqe1)
+	ring.Submit(1, 0)
+	ring.Push(sqe2)
+	ring.Submit(1, 0)
+
+	cqe, err := ring.GetCQEntry(1)
+	fmt.Println(cqe, err)
+	cqe, err = ring.GetCQEntry(1)
+	fmt.Println(cqe, err)
 }

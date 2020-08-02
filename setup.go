@@ -54,8 +54,8 @@ func setup(ring *Ring, size int, p *IOUringParams) error {
 	ring.sq.tail = (*uint32)(unsafe.Pointer(uintptr(pointer) + uintptr(p.SQOff.Tail)))
 	ring.sq.ringMask = (*uint32)(unsafe.Pointer(uintptr(pointer) + uintptr(p.SQOff.RingMask)))
 	ring.sq.ringEntries = (*uint32)(unsafe.Pointer(uintptr(pointer) + uintptr(p.SQOff.RingEntries)))
-	ring.sq.dropped = (*uint32)(unsafe.Pointer(uintptr(pointer) + uintptr(p.SQOff.Dropped)))
 	ring.sq.flags = (*uint32)(unsafe.Pointer(uintptr(pointer) + uintptr(p.SQOff.Flags)))
+	ring.sq.dropped = (*uint32)(unsafe.Pointer(uintptr(pointer) + uintptr(p.SQOff.Dropped)))
 	ring.sq.array = uint32Array(unsafe.Pointer(uintptr(pointer) + uintptr(p.SQOff.Array)))
 
 	if !isSingleMap {
@@ -71,11 +71,13 @@ func setup(ring *Ring, size int, p *IOUringParams) error {
 
 	ring.cq.head = (*uint32)(unsafe.Pointer(uintptr(pointer) + uintptr(p.CQOff.Head)))
 	ring.cq.tail = (*uint32)(unsafe.Pointer(uintptr(pointer) + uintptr(p.CQOff.Tail)))
-	ring.cq.flags = (*uint32)(unsafe.Pointer(uintptr(pointer) + uintptr(p.CQOff.Flags)))
 	ring.cq.ringmask = (*uint32)(unsafe.Pointer(uintptr(pointer) + uintptr(p.CQOff.RingMask)))
 	ring.cq.ringEntries = (*uint32)(unsafe.Pointer(uintptr(pointer) + uintptr(p.CQOff.RingEntries)))
 	ring.cq.overflow = (*uint32)(unsafe.Pointer(uintptr(pointer) + uintptr(p.CQOff.Overflow)))
 	ring.cq.cqes = cqeArray(unsafe.Pointer(uintptr(pointer) + uintptr(p.CQOff.CQEs)))
+	if p.CQOff.Flags != 0 {
+		ring.cq.flags = (*uint32)(unsafe.Pointer(uintptr(pointer) + uintptr(p.CQOff.Flags)))
+	}
 
 	entries, err := syscall.Mmap(int(fd), IORING_OFF_SQES,
 		int(p.SQEntries)*int(sqeSize),
