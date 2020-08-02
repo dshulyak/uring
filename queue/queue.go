@@ -81,8 +81,8 @@ func (q *Queue) completionLoop() {
 			case <-q.wakeC:
 			}
 		}
+		// TODO why GetCQEntry(1) returns EINTR frequently?
 		cqe, err := q.ring.GetCQEntry(0)
-
 		if err == syscall.EAGAIN || err == syscall.EINTR {
 			continue
 		} else if err != nil {
@@ -115,14 +115,13 @@ func (q *Queue) submitionLoop() {
 			limit++
 		case req := <-active:
 			limit--
-
 			sqe := req.sqe
 			sqe.SetUserData(nonce)
 			results[nonce] = req.cqe
 
 			total := q.ring.Push(sqe)
-			_, err := q.ring.Submit(total, 0)
 
+			_, err := q.ring.Submit(total, 0)
 			if err != nil {
 				// FIXME
 				panic(err)
