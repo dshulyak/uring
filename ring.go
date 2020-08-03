@@ -196,8 +196,10 @@ func (r *Ring) peekCQEntry() (CQEntry, bool) {
 }
 
 func (r *Ring) cqNeedsEnter() bool {
-	if r.cq.flags != nil && atomic.LoadUint32(r.cq.flags)&IORING_SQ_CQ_OVERFLOW > 0 {
-		return true
+	if r.cq.flags != nil {
+		if atomic.LoadUint32(r.cq.flags)&IORING_SQ_CQ_OVERFLOW > 0 {
+			return true
+		}
 	}
 	return r.params.Flags&IORING_SETUP_IOPOLL > 0
 }
