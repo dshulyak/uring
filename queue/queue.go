@@ -2,6 +2,7 @@ package queue
 
 import (
 	"errors"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -91,9 +92,9 @@ func (q *Queue) completionLoop() {
 	}
 	wake := q.ring.CQSize() - 1
 	for {
-		// TODO why GetCQEntry(1) returns EINTR frequently?
 		cqe, err := q.ring.GetCQEntry(0)
 		if err == syscall.EAGAIN || err == syscall.EINTR {
+			runtime.Gosched()
 			continue
 		} else if err != nil {
 			// FIXME

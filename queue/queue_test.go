@@ -113,6 +113,9 @@ func BenchmarkWrite(b *testing.B) {
 	b.Run("w2_4kb", func(b *testing.B) {
 		benchmarkWrite(b, 4<<10, 2)
 	})
+	b.Run("w8_4kb", func(b *testing.B) {
+		benchmarkWrite(b, 4<<10, 8)
+	})
 	b.Run("w32_10mb", func(b *testing.B) {
 		benchmarkWrite(b, 10<<20, 32)
 	})
@@ -160,6 +163,9 @@ func BenchmarkOSWrite(b *testing.B) {
 	})
 	b.Run("w2_4kb", func(b *testing.B) {
 		benchmarkOSWrite(b, 4<<10, 2)
+	})
+	b.Run("w8_4kb", func(b *testing.B) {
+		benchmarkWrite(b, 4<<10, 8)
 	})
 	b.Run("w32_10mb", func(b *testing.B) {
 		benchmarkOSWrite(b, 10<<20, 32)

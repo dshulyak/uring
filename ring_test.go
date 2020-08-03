@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"math/rand"
+	"os"
 	"syscall"
 	"testing"
 	"time"
@@ -274,4 +275,44 @@ func TestSlowWrite(t *testing.T) {
 	fmt.Println(cqe, err)
 	cqe, err = ring.GetCQEntry(1)
 	fmt.Println(cqe, err)
+}
+
+func BenchmarkWrite(b *testing.B) {
+	ring, err := Setup(32, nil)
+	require.NoError(b, err)
+	defer ring.Close()
+
+	f, err := ioutil.TempFile("", "test")
+	require.NoError(b, err)
+	defer os.Remove(f.Name())
+
+	size := uint64(4096)
+	data := make([]byte, size)
+	vector := []syscall.Iovec{
+		{
+			Base: &data[0],
+			Len:  size,
+		},
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		var sqe SQEntry
+		Writev(&sqe, f.Fd(), vector, uint64(i)*size, 0)
+		ring.Push(sqe)
+		_, err := ring.Submit(1, 0)
+		if err != nil {
+			b.Error(err)
+		}
+		var cqe CQEntry
+		cqe, err = ring.GetCQEntry(1)
+		if err != nil {
+			b.Error(err)
+		}
+		if cqe.Result() < 0 {
+			b.Errorf("failed with %v", syscall.Errno(-cqe.Result()))
+		}
+	}
 }
