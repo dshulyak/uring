@@ -64,3 +64,28 @@ func (r *Ring) RegisterProbe(probe *Probe) error {
 	}
 	return nil
 }
+
+func (r *Ring) RegisterFiles(fds []int32) error {
+	_, _, errno := syscall.Syscall6(
+		IO_URING_REGISTER,
+		uintptr(r.fd),
+		IORING_REGISTER_FILES,
+		uintptr(unsafe.Pointer(&fds[0])),
+		uintptr(len(fds)), 0, 0)
+	if errno > 0 {
+		return error(errno)
+	}
+	return nil
+}
+
+func (r *Ring) UnregisterFiles() error {
+	_, _, errno := syscall.Syscall(
+		IO_URING_REGISTER,
+		uintptr(r.fd),
+		IORING_UNREGISTER_FILES,
+		0)
+	if errno > 0 {
+		return error(errno)
+	}
+	return nil
+}
