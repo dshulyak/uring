@@ -10,7 +10,10 @@ import (
 	"github.com/dshulyak/uring"
 )
 
-var Closed = errors.New("closed")
+var (
+	Closed        = errors.New("closed")
+	closed uint64 = 1 << 63
+)
 
 var requestPool = sync.Pool{
 	New: func() interface{} {
@@ -85,11 +88,6 @@ func (q *Queue) Complete(sqe uring.SQEntry) (uring.CQEntry, error) {
 
 func (q *Queue) completionLoop() {
 	defer q.wg.Done()
-	select {
-	case <-q.quit:
-		return
-	case <-q.wakeC:
-	}
 	wake := q.ring.CQSize() - 1
 	for {
 		cqe, err := q.ring.GetCQEntry(0)
@@ -99,6 +97,10 @@ func (q *Queue) completionLoop() {
 		} else if err != nil {
 			// FIXME
 			panic(err)
+		}
+
+		if cqe.UserData()&closed > 0 {
+			return
 		}
 
 		q.rmu.Lock()
@@ -114,12 +116,6 @@ func (q *Queue) completionLoop() {
 		switch atomic.AddUint32(q.inflight, ^uint32(0)) {
 		case wake:
 			q.wakeS <- struct{}{}
-		case 0:
-			select {
-			case <-q.quit:
-				return
-			case <-q.wakeC:
-			}
 		}
 	}
 }
@@ -142,8 +138,8 @@ func (q *Queue) submitionLoop() {
 			q.results[nonce] = req
 			q.rmu.Unlock()
 
-			total := q.ring.Push(sqe)
-			_, err := q.ring.Submit(total, 0)
+			_ = q.ring.Push(sqe)
+			_, err := q.ring.Submit(1, 0)
 			if err != nil {
 				// FIXME
 				panic(err)
@@ -151,14 +147,22 @@ func (q *Queue) submitionLoop() {
 
 			// completionLoop will wait on wakeC only after LoadUint32
 			// returned 0
-			switch atomic.AddUint32(q.inflight, total) {
-			case total:
-				q.wakeC <- struct{}{}
+			switch atomic.AddUint32(q.inflight, 1) {
 			case q.ring.CQSize():
 				active = nil
 			}
 			nonce++
 		case <-q.quit:
+			var sqe uring.SQEntry
+			uring.Nop(&sqe)
+			sqe.SetUserData(closed)
+
+			_ = q.ring.Push(sqe)
+			_, err := q.ring.Submit(1, 0)
+			if err != nil {
+				//FIXME
+				panic(err)
+			}
 			return
 		}
 	}
@@ -167,4 +171,11 @@ func (q *Queue) submitionLoop() {
 func (q *Queue) Close() {
 	close(q.quit)
 	q.wg.Wait()
+	for nonce, req := range q.results {
+		req.cond.L.Lock()
+		req.cond.Signal()
+		req.cond.L.Unlock()
+		delete(q.results, nonce)
+	}
+
 }

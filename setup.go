@@ -1,7 +1,6 @@
 package uring
 
 import (
-	"fmt"
 	"syscall"
 	"unsafe"
 )
@@ -11,10 +10,7 @@ const (
 	MaxSize = 4096
 )
 
-func Setup(size int, params *IOUringParams) (*Ring, error) {
-	if size > MaxSize || size < MinSize {
-		return nil, fmt.Errorf("size must be in range [%d:%d]", MinSize, MaxSize)
-	}
+func Setup(size uint, params *IOUringParams) (*Ring, error) {
 	var ring Ring
 	if params != nil {
 		ring.params = *params
@@ -25,14 +21,14 @@ func Setup(size int, params *IOUringParams) (*Ring, error) {
 	return &ring, nil
 }
 
-func setup(ring *Ring, size int, p *IOUringParams) error {
+func setup(ring *Ring, size uint, p *IOUringParams) error {
 	fd, _, errno := syscall.Syscall(IO_URING_SETUP, uintptr(size), uintptr(unsafe.Pointer(p)), 0)
 	if errno != 0 {
 		return error(errno)
 	}
 	ring.fd = int(fd)
 
-	sqsize := p.SQOff.Array + p.SQEntries*uint32(sqeSize)
+	sqsize := p.SQOff.Array + p.SQEntries*uint32(4)
 	cqsize := p.CQOff.CQEs + p.CQEntries*uint32(cqeSize)
 	isSingleMap := p.Features&IORING_FEAT_SINGLE_MMAP > 0
 	if isSingleMap {
@@ -83,6 +79,7 @@ func setup(ring *Ring, size int, p *IOUringParams) error {
 		int(p.SQEntries)*int(sqeSize),
 		syscall.PROT_READ|syscall.PROT_WRITE,
 		syscall.MAP_SHARED|syscall.MAP_POPULATE)
+
 	if err != nil {
 		return err
 	}

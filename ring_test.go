@@ -1,7 +1,6 @@
 package uring
 
 import (
-	"fmt"
 	"io/ioutil"
 	"math/rand"
 	"os"
@@ -212,8 +211,8 @@ func TestNoEnter(t *testing.T) {
 }
 
 func TestResubmitBeforeCompletion(t *testing.T) {
-	n := 32
-	ring, err := Setup(n, nil)
+	n := 2048
+	ring, err := Setup(uint(n), nil)
 	require.NoError(t, err)
 	defer ring.Close()
 
@@ -241,40 +240,6 @@ func TestResubmitBeforeCompletion(t *testing.T) {
 			}
 		}
 	}
-
-}
-
-func TestSlowWrite(t *testing.T) {
-	f, err := ioutil.TempFile("", "writev-tests-")
-	require.NoError(t, err)
-	defer f.Close()
-
-	ring, err := Setup(2, nil)
-	require.NoError(t, err)
-	defer ring.Close()
-
-	data := make([]byte, 4<<10)
-	vector := []syscall.Iovec{
-		{
-			Base: &data[0],
-			Len:  uint64(len(data)),
-		},
-	}
-	var sqe1, sqe2 SQEntry
-	Writev(&sqe1, f.Fd(), vector, 0, 0)
-	sqe1.SetUserData(1)
-	Writev(&sqe2, f.Fd(), vector, 0, 0)
-	sqe2.SetUserData(2)
-
-	ring.Push(sqe1)
-	ring.Submit(1, 0)
-	ring.Push(sqe2)
-	ring.Submit(1, 0)
-
-	cqe, err := ring.GetCQEntry(1)
-	fmt.Println(cqe, err)
-	cqe, err = ring.GetCQEntry(1)
-	fmt.Println(cqe, err)
 }
 
 func BenchmarkWrite(b *testing.B) {
@@ -298,21 +263,13 @@ func BenchmarkWrite(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
+	var sqe SQEntry
 	for i := 0; i < b.N; i++ {
-		var sqe SQEntry
 		Writev(&sqe, f.Fd(), vector, uint64(i)*size, 0)
 		ring.Push(sqe)
-		_, err := ring.Submit(1, 0)
+		_, err := ring.Submit(1, 1)
 		if err != nil {
 			b.Error(err)
-		}
-		var cqe CQEntry
-		cqe, err = ring.GetCQEntry(1)
-		if err != nil {
-			b.Error(err)
-		}
-		if cqe.Result() < 0 {
-			b.Errorf("failed with %v", syscall.Errno(-cqe.Result()))
 		}
 	}
 }
