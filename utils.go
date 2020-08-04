@@ -26,3 +26,16 @@ func Readv(sqe *SQEntry, fd uintptr, iovec []syscall.Iovec, offset uint64, flags
 	sqe.opcodeFlags = flags
 	sqe.addr = (uint64)(uintptr(unsafe.Pointer(&iovec[0])))
 }
+
+func Openat(sqe *SQEntry, dfd int32, pathptr *byte, flags uint32, mode uint32) {
+	sqe.opcode = IORING_OP_OPENAT
+	sqe.fd = dfd
+	sqe.opcodeFlags = flags
+	sqe.addr = (uint64)(uintptr(unsafe.Pointer(pathptr)))
+	sqe.len = mode
+}
+
+func Close(sqe *SQEntry, fd uintptr) {
+	sqe.opcode = IORING_OP_CLOSE
+	sqe.fd = int32(fd)
+}
