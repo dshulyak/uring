@@ -142,14 +142,14 @@ func TestCopy(t *testing.T) {
 		read, write SQEntry
 	)
 	for {
-		// TODO Readv with IOCQE_IO_LINK makes Writev fail with 'file too large'
 		Readv(&read, from.Fd(), vector, offset, 0)
-		//read.SetFlags(IOSQE_IO_LINK)
+		read.SetFlags(IOSQE_IO_LINK)
 		Writev(&write, to.Fd(), vector, offset, 0)
 
-		ring.Push(read)
-		_, err := ring.Submit(1)
+		ring.Push(read, write)
+		_, err := ring.Submit(2)
 		require.NoError(t, err)
+
 		rcqe, err := ring.GetCQEntry(0)
 		require.NoError(t, err)
 		require.True(t, rcqe.Result() >= 0, "read result %d ('%v')", rcqe.Result(), syscall.Errno(-rcqe.Result()))
@@ -159,9 +159,6 @@ func TestCopy(t *testing.T) {
 			break
 		}
 
-		ring.Push(write)
-		_, err = ring.Submit(1)
-		require.NoError(t, err)
 		wcqe, err := ring.GetCQEntry(0)
 		require.NoError(t, err)
 		require.Equal(t, ret, wcqe.Result(), "write result %d ('%v')", wcqe.Result(), syscall.Errno(-wcqe.Result()))
