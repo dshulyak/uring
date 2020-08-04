@@ -79,6 +79,12 @@ type Ring struct {
 	cqData []byte
 	// sqArrayData array mapped with Ring.fd at IORING_OFF_SQES offset
 	sqArrayData []byte
+
+	eventfd uintptr
+}
+
+func (r *Ring) Eventfd() uintptr {
+	return r.eventfd
 }
 
 func (r *Ring) CQSize() uint32 {

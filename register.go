@@ -89,3 +89,35 @@ func (r *Ring) UnregisterFiles() error {
 	}
 	return nil
 }
+
+func (r *Ring) SetupEventfd() error {
+	if r.eventfd != 0 {
+		return nil
+	}
+	r0, _, errno := syscall.Syscall(syscall.SYS_EVENTFD2, 0, 0, 0)
+	if errno > 0 {
+		return error(errno)
+	}
+	r.eventfd = r0
+	_, _, errno = syscall.Syscall6(IO_URING_REGISTER, uintptr(r.fd), IORING_REGISTER_EVENTFD, uintptr(unsafe.Pointer(&r0)), 1, 0, 0)
+	if errno > 0 {
+		_ = r.CloseEventfd()
+		return error(errno)
+	}
+	return nil
+}
+
+func (r *Ring) CloseEventfd() error {
+	if r.eventfd != 0 {
+		return nil
+	}
+	_, _, errno := syscall.Syscall(IO_URING_REGISTER, uintptr(r.fd), IORING_UNREGISTER_EVENTFD, 0)
+	if err := syscall.Close(int(r.eventfd)); err != nil {
+		return err
+	}
+	r.eventfd = 0
+	if errno > 0 {
+		return error(errno)
+	}
+	return nil
+}
