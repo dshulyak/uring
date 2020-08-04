@@ -44,7 +44,6 @@ func New(ring *uring.Ring) *Queue {
 		requests: make(chan *request, ring.SQSize()),
 		quit:     make(chan struct{}),
 		inflight: &inflight,
-		wakeC:    make(chan struct{}, 1),
 		wakeS:    make(chan struct{}, 1),
 		ring:     ring,
 		results:  make(map[uint64]*request, ring.CQSize()),
@@ -61,7 +60,7 @@ func New(ring *uring.Ring) *Queue {
 //   will allow to submit entries in a batch, if they are added concurrently
 // Note:
 // - Completion loop with syscall is always slower.
-//   epoll_wait  and uring_enter are both slower with low number of workers.
+//   epoll_wait and uring_enter are both slower with low number of workers.
 //   But it keeps one of the golang P busy. Maybe this tradeoff
 type Queue struct {
 	wg   sync.WaitGroup
@@ -72,8 +71,8 @@ type Queue struct {
 	rmu     sync.Mutex
 	results map[uint64]*request
 
-	inflight     *uint32
-	wakeC, wakeS chan struct{}
+	inflight *uint32
+	wakeS    chan struct{}
 
 	ring *uring.Ring
 }
