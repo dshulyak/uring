@@ -17,9 +17,8 @@ var (
 
 var requestPool = sync.Pool{
 	New: func() interface{} {
-		mu := sync.Mutex{}
 		return &request{
-			cond: sync.NewCond(&mu),
+			ch: make(chan struct{}, 1),
 		}
 	},
 }
@@ -27,8 +26,8 @@ var requestPool = sync.Pool{
 type request struct {
 	sqe uring.SQEntry
 
-	cond *sync.Cond
-	cqe  uring.CQEntry
+	ch  chan struct{}
+	cqe uring.CQEntry
 }
 
 func New(ring *uring.Ring) *Queue {
@@ -72,12 +71,10 @@ func (q *Queue) Complete(sqe uring.SQEntry) (uring.CQEntry, error) {
 	req := requestPool.Get().(*request)
 	req.sqe = sqe
 
-	req.cond.L.Lock()
 	select {
 	case q.requests <- req:
-		req.cond.Wait()
+		<-req.ch
 		cqe := req.cqe
-		req.cond.L.Unlock()
 
 		requestPool.Put(req)
 		return cqe, nil
@@ -108,10 +105,8 @@ func (q *Queue) completionLoop() {
 		delete(q.results, cqe.UserData())
 		q.rmu.Unlock()
 
-		req.cond.L.Lock()
 		req.cqe = cqe
-		req.cond.Signal()
-		req.cond.L.Unlock()
+		req.ch <- struct{}{}
 
 		switch atomic.AddUint32(q.inflight, ^uint32(0)) {
 		case wake:
@@ -172,9 +167,7 @@ func (q *Queue) Close() {
 	close(q.quit)
 	q.wg.Wait()
 	for nonce, req := range q.results {
-		req.cond.L.Lock()
-		req.cond.Signal()
-		req.cond.L.Unlock()
+		req.ch <- struct{}{}
 		delete(q.results, nonce)
 	}
 
