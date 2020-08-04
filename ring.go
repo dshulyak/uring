@@ -157,14 +157,13 @@ func (r *Ring) GetCQEntry(minComplete uint32) (CQEntry, error) {
 			return cqe, nil
 		}
 		var enter bool
-		if r.cqNeedsEnter() {
+		if r.cqNeedsEnter() || minComplete > 0 {
 			flags |= IORING_ENTER_GETEVENTS
 			enter = true
 		} else if r.sqNeedsEnter(0, &flags) {
 			enter = true
-		} else if minComplete > 0 {
-			enter = true
 		}
+
 		if enter {
 			if _, err := r.enter(0, minComplete, flags); err != nil {
 				return CQEntry{}, err

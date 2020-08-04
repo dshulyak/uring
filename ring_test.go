@@ -243,7 +243,7 @@ func TestResubmitBeforeCompletion(t *testing.T) {
 }
 
 func BenchmarkWrite(b *testing.B) {
-	ring, err := Setup(32, nil)
+	ring, err := Setup(512, nil)
 	require.NoError(b, err)
 	defer ring.Close()
 
@@ -271,5 +271,6 @@ func BenchmarkWrite(b *testing.B) {
 		if err != nil {
 			b.Error(err)
 		}
+		_, _ = ring.GetCQEntry(0)
 	}
 }
