@@ -61,8 +61,6 @@ func benchmarkWrite(b *testing.B, size uint64, n int) {
 	require.NoError(b, err)
 	defer os.Remove(f.Name())
 
-	require.NoError(b, ring.RegisterFiles([]int32{int32(f.Fd())}))
-
 	data := make([]byte, size)
 	vector := []syscall.Iovec{
 		{
@@ -82,8 +80,7 @@ func benchmarkWrite(b *testing.B, size uint64, n int) {
 			defer wg.Done()
 			for i := 0; i < b.N; i++ {
 				var sqe uring.SQEntry
-				uring.Writev(&sqe, 0, vector, uint64(i)*size, 0)
-				sqe.SetFlags(uring.IOSQE_FIXED_FILE)
+				uring.Writev(&sqe, f.Fd(), vector, uint64(i)*size, 0)
 				cqe, err := queue.Complete(sqe)
 				if err != nil {
 					b.Error(err)
