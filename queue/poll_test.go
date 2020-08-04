@@ -20,7 +20,7 @@ func TestPoll(t *testing.T) {
 		uring.Nop(&sqe)
 		sqe.SetUserData(i)
 		ring.Push(sqe)
-		_, err = ring.Submit(1, 0)
+		_, err = ring.Submit(0)
 		require.NoError(t, err)
 
 		n, err := pl.wait()

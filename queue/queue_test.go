@@ -171,6 +171,9 @@ func BenchmarkOSWrite(b *testing.B) {
 	b.Run("w1_4kb", func(b *testing.B) {
 		benchmarkOSWrite(b, 4<<10, 1)
 	})
+	b.Run("w1_1mb", func(b *testing.B) {
+		benchmarkOSWrite(b, 1<<20, 1)
+	})
 	b.Run("w10240_1mb", func(b *testing.B) {
 		benchmarkOSWrite(b, 1<<20, 10240)
 	})

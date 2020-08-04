@@ -41,7 +41,7 @@ func TestWritev(t *testing.T) {
 		}
 
 		ring.Push(sqes[:]...)
-		_, err = ring.Submit(4, 4)
+		_, err = ring.Submit(4)
 		require.NoError(t, err)
 
 		for i := 0; i < 4; i++ {
@@ -96,7 +96,7 @@ func TestReadv(t *testing.T) {
 		}
 
 		ring.Push(sqes[:]...)
-		_, err = ring.Submit(num, num)
+		_, err = ring.Submit(num)
 		require.NoError(t, err)
 
 		for i := 0; i < num; i++ {
@@ -147,8 +147,8 @@ func TestCopy(t *testing.T) {
 		//read.SetFlags(IOSQE_IO_LINK)
 		Writev(&write, to.Fd(), vector, offset, 0)
 
-		ring.Push(read, write)
-		_, err := ring.Submit(1, 1)
+		ring.Push(read)
+		_, err := ring.Submit(1)
 		require.NoError(t, err)
 		rcqe, err := ring.GetCQEntry(0)
 		require.NoError(t, err)
@@ -159,7 +159,8 @@ func TestCopy(t *testing.T) {
 			break
 		}
 
-		_, err = ring.Submit(1, 1)
+		ring.Push(write)
+		_, err = ring.Submit(1)
 		require.NoError(t, err)
 		wcqe, err := ring.GetCQEntry(0)
 		require.NoError(t, err)
@@ -197,7 +198,7 @@ func TestNoEnter(t *testing.T) {
 	var nop SQEntry
 	Nop(&nop)
 	ring.Push(nop)
-	_, err = ring.Submit(1, 0)
+	_, err = ring.Submit(0)
 	require.NoError(t, err)
 
 	start := time.Now()
@@ -225,7 +226,7 @@ func TestResubmitBeforeCompletion(t *testing.T) {
 			ring.Push(sqe)
 		}
 
-		_, err = ring.Submit(uint32(n), 0)
+		_, err = ring.Submit(0)
 		require.NoError(t, err)
 	}
 	for round := 0; round < 2; round++ {
@@ -267,7 +268,7 @@ func BenchmarkWrite(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		Writev(&sqe, f.Fd(), vector, uint64(i)*size, 0)
 		ring.Push(sqe)
-		_, err := ring.Submit(1, 1)
+		_, err := ring.Submit(1)
 		if err != nil {
 			b.Error(err)
 		}

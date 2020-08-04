@@ -157,7 +157,7 @@ func (q *Queue) submitionLoop() {
 			q.rmu.Unlock()
 
 			_ = q.ring.Push(sqe)
-			_, err := q.ring.Submit(1, 0)
+			_, err := q.ring.Submit(0)
 			if err != nil {
 				// FIXME
 				panic(err)
@@ -176,7 +176,7 @@ func (q *Queue) submitionLoop() {
 			sqe.SetUserData(closed)
 
 			_ = q.ring.Push(sqe)
-			_, err := q.ring.Submit(1, 0)
+			_, err := q.ring.Submit(0)
 			if err != nil {
 				//FIXME
 				panic(err)

@@ -21,7 +21,7 @@ func BenchmarkSWQueue(b *testing.B) {
 	require.NoError(b, err)
 	defer os.Remove(f.Name())
 
-	size := uint64(4096)
+	size := uint64(1 << 20)
 	data := make([]byte, size)
 	vector := []syscall.Iovec{
 		{

@@ -123,26 +123,27 @@ func (r *Ring) Push(sqes ...SQEntry) uint32 {
 	return i
 }
 
-func (r *Ring) flushSq() {
+func (r *Ring) flushSq() uint32 {
 	toSubmit := r.sq.sqeTail - r.sq.sqeHead
 	if toSubmit == 0 {
-		return
+		return 0
 	}
 
 	tail := *r.sq.tail
 	mask := *r.sq.ringMask
-	for ; toSubmit > 0; toSubmit-- {
+	for i := toSubmit; i > 0; i-- {
 		r.sq.array.set(tail&mask, r.sq.sqeHead&mask)
 		tail++
 		r.sq.sqeHead++
 	}
 	atomic.StoreUint32(r.sq.tail, tail)
+	return toSubmit
 }
 
 // Submit and wait for specified number of entries.
-func (r *Ring) Submit(submitted uint32, minComplete uint32) (uint32, error) {
+func (r *Ring) Submit(minComplete uint32) (uint32, error) {
 	// TODO get the actual number of submitted records from flushed sq
-	r.flushSq()
+	submitted := r.flushSq()
 	var flags uint32
 	if r.sqNeedsEnter(submitted, &flags) || minComplete > 0 {
 		if minComplete > 0 || (r.params.Flags&IORING_SETUP_IOPOLL) > 0 {
@@ -157,21 +158,12 @@ func (r *Ring) Submit(submitted uint32, minComplete uint32) (uint32, error) {
 // CQE is copied from mmaped region to avoid additional sync step after CQE was consumed.
 func (r *Ring) GetCQEntry(minComplete uint32) (CQEntry, error) {
 	for {
-		var flags uint32
 		cqe, found := r.peekCQEntry()
 		if found {
 			return cqe, nil
 		}
-		var enter bool
 		if r.cqNeedsEnter() || minComplete > 0 {
-			flags |= IORING_ENTER_GETEVENTS
-			enter = true
-		} else if r.sqNeedsEnter(0, &flags) {
-			enter = true
-		}
-
-		if enter {
-			if _, err := r.enter(0, minComplete, flags); err != nil {
+			if _, err := r.enter(0, minComplete, IORING_ENTER_GETEVENTS); err != nil {
 				return CQEntry{}, err
 			}
 			continue

@@ -86,7 +86,7 @@ func (q *SWQueue) CompleteAsync(sqe uring.SQEntry) (*request, error) {
 
 	sqe.SetUserData(uint64(q.nonce))
 	_ = q.ring.Push(sqe)
-	_, err := q.ring.Submit(1, 0)
+	_, err := q.ring.Submit(0)
 
 	q.nonce++
 	return req, err
@@ -111,7 +111,7 @@ func (q *SWQueue) Close() error {
 	sqe.SetUserData(closed)
 
 	_ = q.ring.Push(sqe)
-	_, err := q.ring.Submit(1, 0)
+	_, err := q.ring.Submit(0)
 	if err != nil {
 		//FIXME
 		return err
