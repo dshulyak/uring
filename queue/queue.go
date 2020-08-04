@@ -26,8 +26,16 @@ var requestPool = sync.Pool{
 type request struct {
 	sqe uring.SQEntry
 
-	ch  chan struct{}
-	cqe uring.CQEntry
+	ch chan struct{}
+	uring.CQEntry
+}
+
+func (r *request) Wait() <-chan struct{} {
+	return r.ch
+}
+
+func (r *request) Dispose() {
+	requestPool.Put(r)
 }
 
 func New(ring *uring.Ring) *Queue {
@@ -49,9 +57,12 @@ func New(ring *uring.Ring) *Queue {
 
 // Queue synchronizes access to uring.Ring instance.
 // Future optimizations:
-// - use lock-free buffer for submitting requests
-//   will allow to submit entries in a batch, and avoid channel mutex
-// - park completion loop only after a period of inactivity
+// - use (lock-free?) buffer for submitting requests
+//   will allow to submit entries in a batch, if they are added concurrently
+// Note:
+// - Completion loop with syscall is always slower.
+//   epoll_wait  and uring_enter are both slower with low number of workers.
+//   But it keeps one of the golang P busy. Maybe this tradeoff
 type Queue struct {
 	wg   sync.WaitGroup
 	quit chan struct{}
@@ -74,12 +85,25 @@ func (q *Queue) Complete(sqe uring.SQEntry) (uring.CQEntry, error) {
 	select {
 	case q.requests <- req:
 		<-req.ch
-		cqe := req.cqe
-
-		requestPool.Put(req)
+		cqe := req.CQEntry
+		req.Dispose()
 		return cqe, nil
 	case <-q.quit:
 		return uring.CQEntry{}, Closed
+	}
+}
+
+// CompleteAsync will not block, and will allow caller to send many requests
+// before blocking goroutine.
+func (q *Queue) CompleteAsync(sqe uring.SQEntry) (*request, error) {
+	req := requestPool.Get().(*request)
+	req.sqe = sqe
+
+	select {
+	case q.requests <- req:
+		return req, nil
+	case <-q.quit:
+		return nil, Closed
 	}
 }
 
@@ -105,7 +129,7 @@ func (q *Queue) completionLoop() {
 		delete(q.results, cqe.UserData())
 		q.rmu.Unlock()
 
-		req.cqe = cqe
+		req.CQEntry = cqe
 		req.ch <- struct{}{}
 
 		switch atomic.AddUint32(q.inflight, ^uint32(0)) {
