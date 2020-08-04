@@ -2,7 +2,6 @@ package queue
 
 import (
 	"errors"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -32,7 +31,13 @@ type request struct {
 
 func New(ring *uring.Ring) *Queue {
 	var inflight uint32
+	pl, err := newPoll(ring)
+	if err != nil {
+		// FIXME
+		panic(err)
+	}
 	q := &Queue{
+		poll:     pl,
 		requests: make(chan *request, ring.SQSize()),
 		quit:     make(chan struct{}),
 		inflight: &inflight,
@@ -55,6 +60,8 @@ func New(ring *uring.Ring) *Queue {
 type Queue struct {
 	wg   sync.WaitGroup
 	quit chan struct{}
+
+	poll *poll
 
 	requests chan *request
 
@@ -87,9 +94,16 @@ func (q *Queue) completionLoop() {
 	defer q.wg.Done()
 	wake := q.ring.CQSize() - 1
 	for {
+		n, err := q.poll.wait()
+		if err != nil {
+			panic(err)
+		}
+		if n == 0 {
+			continue
+		}
+
 		cqe, err := q.ring.GetCQEntry(0)
 		if err == syscall.EAGAIN || err == syscall.EINTR {
-			runtime.Gosched()
 			continue
 		} else if err != nil {
 			// FIXME
@@ -163,12 +177,12 @@ func (q *Queue) submitionLoop() {
 	}
 }
 
-func (q *Queue) Close() {
+func (q *Queue) Close() error {
 	close(q.quit)
 	q.wg.Wait()
 	for nonce, req := range q.results {
 		req.ch <- struct{}{}
 		delete(q.results, nonce)
 	}
-
+	return q.poll.close()
 }
