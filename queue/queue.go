@@ -39,11 +39,13 @@ func (r *request) Dispose() {
 }
 
 func New(ring *uring.Ring) *Queue {
-	var inflight uint32
+	var (
+		inflight uint32
+		reqmu    sync.Mutex
+	)
 	q := &Queue{
-		quit:     make(chan struct{}),
+		reqCond:  sync.NewCond(&reqmu),
 		inflight: &inflight,
-		wakeS:    make(chan struct{}, 1),
 		ring:     ring,
 		results:  make(map[uint64]*request, ring.CQSize()),
 	}
@@ -54,18 +56,15 @@ func New(ring *uring.Ring) *Queue {
 
 // Queue provides thread safe access to uring.Ring instance.
 type Queue struct {
-	wg   sync.WaitGroup
-	quit chan struct{}
-
-	reqmu sync.Mutex
+	wg      sync.WaitGroup
+	reqCond *sync.Cond
+	nonce   uint32
+	closed  bool
 
 	rmu     sync.Mutex
 	results map[uint64]*request
 
 	inflight *uint32
-	wakeS    chan struct{}
-
-	nonce uint32
 
 	ring *uring.Ring
 }
@@ -97,19 +96,26 @@ func (q *Queue) completionLoop() {
 		req.CQEntry = cqe
 		req.ch <- struct{}{}
 
-		if atomic.AddUint32(q.inflight, ^uint32(0)) == wake {
-			q.wakeS <- struct{}{}
+		if atomic.AddUint32(q.inflight, ^uint32(0)) >= wake {
+			q.reqCond.L.Lock()
+			q.reqCond.Signal()
+			q.reqCond.L.Unlock()
 		}
 	}
 }
 
+var locked int32
+
 func (q *Queue) CompleteAsync(sqe uring.SQEntry) (*request, error) {
-	q.reqmu.Lock()
-	if atomic.AddUint32(q.inflight, 1) > q.ring.CQSize() {
-		select {
-		case <-q.wakeS:
-		case <-q.quit:
-			q.reqmu.Unlock()
+	q.reqCond.L.Lock()
+	if q.closed {
+		q.reqCond.L.Unlock()
+		return nil, Closed
+	}
+	if inflight := atomic.AddUint32(q.inflight, 1); inflight > q.ring.CQSize() {
+		q.reqCond.Wait()
+		if q.closed {
+			q.reqCond.L.Unlock()
 			return nil, Closed
 		}
 	}
@@ -119,12 +125,11 @@ func (q *Queue) CompleteAsync(sqe uring.SQEntry) (*request, error) {
 	q.rmu.Lock()
 	q.results[uint64(q.nonce)] = req
 	q.rmu.Unlock()
-
 	sqe.SetUserData(uint64(q.nonce))
 	_ = q.ring.Flush(sqe)
 
 	q.nonce++
-	q.reqmu.Unlock()
+	q.reqCond.L.Unlock()
 
 	// submitting sqe in batch doesn't make any substantial difference
 	_, err := q.ring.Enter(1, 0)
@@ -148,7 +153,10 @@ func (q *Queue) Complete(sqe uring.SQEntry) (uring.CQEntry, error) {
 }
 
 func (q *Queue) Close() error {
-	close(q.quit)
+	q.reqCond.L.Lock()
+	q.closed = true
+	q.reqCond.Broadcast()
+	q.reqCond.L.Unlock()
 
 	var sqe uring.SQEntry
 	uring.Nop(&sqe)
