@@ -175,9 +175,6 @@ func TestCopy(t *testing.T) {
 }
 
 func TestRegisterProbe(t *testing.T) {
-	// TODO any way to assert probe support?
-	t.SkipNow()
-
 	ring, err := Setup(4, nil)
 	require.NoError(t, err)
 	defer ring.Close()
