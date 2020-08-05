@@ -53,14 +53,10 @@ func TestComplete(t *testing.T) {
 }
 
 func benchmarkWrite(b *testing.B, size uint64, n int) {
-	rings := make([]*uring.Ring, 8)
-	var err error
-	for i := range rings {
-		rings[i], err = uring.Setup(512, nil)
-		require.NoError(b, err)
-		defer rings[i].Close()
-	}
-	queue := NewSharded(rings...)
+	ring, err := uring.Setup(1024, nil)
+	require.NoError(b, err)
+	defer ring.Close()
+	queue := New(ring)
 	defer queue.Close()
 
 	f, err := ioutil.TempFile("", "test")

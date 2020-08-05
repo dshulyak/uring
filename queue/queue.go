@@ -112,8 +112,6 @@ func (q *Queue) TryComplete() bool {
 	return true
 }
 
-var locked int32
-
 func (q *Queue) CompleteAsync(sqe uring.SQEntry) (*request, error) {
 	q.reqCond.L.Lock()
 	if q.closed {

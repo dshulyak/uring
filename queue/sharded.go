@@ -74,6 +74,9 @@ func (q *ShardedQueue) completionLoop() {
 }
 
 func (q *ShardedQueue) getQueue() *Queue {
+	if len(q.rings) == 1 {
+		return q.byEventfd[q.shards[0]]
+	}
 	tid := syscall.Gettid()
 	shard := tid % len(q.shards)
 	return q.byEventfd[q.shards[shard]]
