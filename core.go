@@ -168,9 +168,9 @@ type SQEntry struct {
 	opcodeFlags uint32 // union for opcode specific flags
 	userData    uint64
 
-	bufIG       uint16
+	bufIG       uint16 // union {buf_index,buf_group}
 	personality uint16
-	spliceFdIn  uint32
+	spliceFdIn  int32
 	pad2        [2]uint64
 }
 
@@ -226,7 +226,7 @@ func (e *SQEntry) SetSpliceOffIn(val uint64) {
 	e.addr = val
 }
 
-func (e *SQEntry) SetSpliceFdIn(val uint32) {
+func (e *SQEntry) SetSpliceFdIn(val int32) {
 	e.spliceFdIn = val
 }
 

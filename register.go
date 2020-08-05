@@ -90,6 +90,31 @@ func (r *Ring) UnregisterFiles() error {
 	return nil
 }
 
+func (r *Ring) RegisterBuffers(iovec []syscall.Iovec) error {
+	_, _, errno := syscall.Syscall6(
+		IO_URING_REGISTER,
+		uintptr(r.fd),
+		IORING_REGISTER_BUFFERS,
+		uintptr(unsafe.Pointer(&iovec[0])),
+		uintptr(len(iovec)), 0, 0)
+	if errno > 0 {
+		return error(errno)
+	}
+	return nil
+}
+
+func (r *Ring) UnregisterBuffers() error {
+	_, _, errno := syscall.Syscall(
+		IO_URING_REGISTER,
+		uintptr(r.fd),
+		IORING_UNREGISTER_BUFFERS,
+		0)
+	if errno > 0 {
+		return error(errno)
+	}
+	return nil
+}
+
 func (r *Ring) SetupEventfd() error {
 	if r.eventfd != 0 {
 		return nil

@@ -27,6 +27,26 @@ func Readv(sqe *SQEntry, fd uintptr, iovec []syscall.Iovec, offset uint64, flags
 	sqe.addr = (uint64)(uintptr(unsafe.Pointer(&iovec[0])))
 }
 
+func WriteFixed(sqe *SQEntry, fd uintptr, iovec syscall.Iovec, offset uint64, flags uint32, bufIndex uint16) {
+	sqe.opcode = IORING_OP_WRITE_FIXED
+	sqe.fd = int32(fd)
+	sqe.len = uint32(iovec.Len)
+	sqe.offset = offset
+	sqe.opcodeFlags = flags
+	sqe.addr = (uint64)(uintptr(unsafe.Pointer(iovec.Base)))
+	sqe.SetBufIndex(bufIndex)
+}
+
+func ReadFixed(sqe *SQEntry, fd uintptr, iovec syscall.Iovec, offset uint64, flags uint32, bufIndex uint16) {
+	sqe.opcode = IORING_OP_READ_FIXED
+	sqe.fd = int32(fd)
+	sqe.len = uint32(iovec.Len)
+	sqe.offset = offset
+	sqe.opcodeFlags = flags
+	sqe.addr = (uint64)(uintptr(unsafe.Pointer(iovec.Base)))
+	sqe.SetBufIndex(bufIndex)
+}
+
 func Openat(sqe *SQEntry, dfd int32, pathptr *byte, flags uint32, mode uint32) {
 	sqe.opcode = IORING_OP_OPENAT
 	sqe.fd = dfd

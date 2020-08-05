@@ -240,35 +240,57 @@ func TestResubmitBeforeCompletion(t *testing.T) {
 	}
 }
 
-func BenchmarkWrite(b *testing.B) {
-	ring, err := Setup(512, nil)
-	require.NoError(b, err)
+func TestReadWriteFixed(t *testing.T) {
+	ring, err := Setup(32, nil)
+	require.NoError(t, err)
 	defer ring.Close()
 
 	f, err := ioutil.TempFile("", "test")
-	require.NoError(b, err)
+	require.NoError(t, err)
 	defer os.Remove(f.Name())
 
-	size := uint64(4096)
-	data := make([]byte, size)
-	vector := []syscall.Iovec{
+	data := []byte("ping")
+	resp := make([]byte, len(data))
+	iovec := []syscall.Iovec{
 		{
 			Base: &data[0],
-			Len:  size,
+			Len:  uint64(len(data)),
+		},
+		{
+			Base: &resp[0],
+			Len:  uint64(len(data)),
 		},
 	}
 
-	b.ReportAllocs()
-	b.ResetTimer()
-
+	require.NoError(t, ring.RegisterBuffers(iovec))
 	var sqe SQEntry
-	for i := 0; i < b.N; i++ {
-		Writev(&sqe, f.Fd(), vector, uint64(i)*size, 0)
-		ring.Push(sqe)
-		_, err := ring.Submit(1)
-		if err != nil {
-			b.Error(err)
-		}
-		_, _ = ring.GetCQEntry(0)
-	}
+
+	WriteFixed(&sqe, f.Fd(), iovec[0], 0, 0, 0)
+	ring.Push(sqe)
+	_, err = ring.Submit(1)
+	require.NoError(t, err)
+
+	cqe, err := ring.GetCQEntry(1)
+	require.NoError(t, err)
+	require.Equal(t, int32(len(data)), cqe.Result(), syscall.Errno(-cqe.Result()))
+
+	out := make([]byte, len(data))
+	_, err = f.ReadAt(out, 0)
+	require.NoError(t, err)
+	require.Equal(t, data, out)
+
+	in := []byte("pong")
+	_, err = f.WriteAt(in, 0)
+	require.NoError(t, err)
+
+	ReadFixed(&sqe, f.Fd(), iovec[1], 0, 0, 1)
+	ring.Push(sqe)
+	_, err = ring.Submit(1)
+	require.NoError(t, err)
+
+	cqe, err = ring.GetCQEntry(1)
+	require.NoError(t, err)
+	require.Equal(t, int32(len(data)), cqe.Result(), syscall.Errno(-cqe.Result()))
+
+	require.Equal(t, in, resp)
 }
