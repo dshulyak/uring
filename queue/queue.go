@@ -39,24 +39,27 @@ func (r *request) Dispose() {
 }
 
 func New(ring *uring.Ring) *Queue {
-	var (
-		inflight uint32
-		reqmu    sync.Mutex
-	)
-	q := &Queue{
-		reqCond:  sync.NewCond(&reqmu),
-		inflight: &inflight,
-		ring:     ring,
-		results:  make(map[uint64]*request, ring.CQSize()),
-	}
+	q := newQueue(ring)
 	q.wg.Add(1)
 	go q.completionLoop()
 	return q
 }
 
+func newQueue(ring *uring.Ring) *Queue {
+	var (
+		inflight uint32
+		reqmu    sync.Mutex
+	)
+	return &Queue{
+		reqCond:  sync.NewCond(&reqmu),
+		inflight: &inflight,
+		ring:     ring,
+		results:  make(map[uint64]*request, ring.CQSize()),
+	}
+}
+
 // Queue provides thread safe access to uring.Ring instance.
 type Queue struct {
-	wg      sync.WaitGroup
 	reqCond *sync.Cond
 	nonce   uint32
 	closed  bool
@@ -67,41 +70,46 @@ type Queue struct {
 	inflight *uint32
 
 	ring *uring.Ring
+
+	wg sync.WaitGroup
 }
 
 // completionLoop ...
 // Spinning with gosched allows to reap completions ~20% faster.
 func (q *Queue) completionLoop() {
 	defer q.wg.Done()
-	wake := q.ring.CQSize()
-	for {
-		cqe, err := q.ring.GetCQEntry(0)
-		if err == syscall.EAGAIN || err == syscall.EINTR {
-			runtime.Gosched()
-			continue
-		} else if err != nil {
-			// FIXME
-			panic(err)
-		}
-
-		if cqe.UserData()&closed > 0 {
-			return
-		}
-
-		q.rmu.Lock()
-		req := q.results[cqe.UserData()]
-		delete(q.results, cqe.UserData())
-		q.rmu.Unlock()
-
-		req.CQEntry = cqe
-		req.ch <- struct{}{}
-
-		if atomic.AddUint32(q.inflight, ^uint32(0)) >= wake {
-			q.reqCond.L.Lock()
-			q.reqCond.Signal()
-			q.reqCond.L.Unlock()
-		}
+	for q.TryComplete() {
 	}
+}
+
+func (q *Queue) TryComplete() bool {
+	cqe, err := q.ring.GetCQEntry(0)
+	if err == syscall.EAGAIN || err == syscall.EINTR {
+		runtime.Gosched()
+		return true
+	} else if err != nil {
+		// FIXME
+		panic(err)
+	}
+
+	if cqe.UserData()&closed > 0 {
+		return false
+	}
+
+	q.rmu.Lock()
+	req := q.results[cqe.UserData()]
+	delete(q.results, cqe.UserData())
+	q.rmu.Unlock()
+
+	req.CQEntry = cqe
+	req.ch <- struct{}{}
+
+	if atomic.AddUint32(q.inflight, ^uint32(0)) >= q.ring.CQSize() {
+		q.reqCond.L.Lock()
+		q.reqCond.Signal()
+		q.reqCond.L.Unlock()
+	}
+	return true
 }
 
 var locked int32

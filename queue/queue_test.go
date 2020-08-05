@@ -1,6 +1,7 @@
 package queue
 
 import (
+	"fmt"
 	"io/ioutil"
 	"os"
 	"sort"
@@ -94,35 +95,16 @@ func benchmarkWrite(b *testing.B, size uint64, n int) {
 	wg.Wait()
 }
 
-// TODO move it to the file submodule once it exists
 func BenchmarkWrite(b *testing.B) {
-	b.Run("w32_4kb", func(b *testing.B) {
-		benchmarkWrite(b, 4<<10, 32)
-	})
-	b.Run("w512_4kb", func(b *testing.B) {
-		benchmarkWrite(b, 4<<10, 512)
-	})
-	b.Run("w2_4kb", func(b *testing.B) {
-		benchmarkWrite(b, 4<<10, 2)
-	})
-	b.Run("w8_4kb", func(b *testing.B) {
-		benchmarkWrite(b, 4<<10, 8)
-	})
-	b.Run("w32_10mb", func(b *testing.B) {
-		benchmarkWrite(b, 10<<20, 32)
-	})
-	b.Run("w32_100mb", func(b *testing.B) {
-		benchmarkWrite(b, 100<<20, 32)
-	})
-	b.Run("w1_4kb", func(b *testing.B) {
-		benchmarkWrite(b, 4<<10, 1)
-	})
-	b.Run("w1_1mb", func(b *testing.B) {
-		benchmarkWrite(b, 1<<20, 1)
-	})
-	b.Run("w10240_1mb", func(b *testing.B) {
-		benchmarkWrite(b, 1<<20, 10240)
-	})
+	for _, w := range []int{1, 2, 4, 8, 16, 32, 512, 1024, 2048} {
+		for _, size := range []uint64{4 << 10, 1 << 20, 10 << 20} {
+			w := w
+			size := size
+			b.Run(fmt.Sprintf("w%d_%d", w, size), func(b *testing.B) {
+				benchmarkWrite(b, size, w)
+			})
+		}
+	}
 }
 
 func benchmarkOSWrite(b *testing.B, size int64, n int) {
@@ -153,33 +135,15 @@ func benchmarkOSWrite(b *testing.B, size int64, n int) {
 }
 
 func BenchmarkOSWrite(b *testing.B) {
-	b.Run("w32_4kb", func(b *testing.B) {
-		benchmarkOSWrite(b, 4<<10, 32)
-	})
-	b.Run("w512_4kb", func(b *testing.B) {
-		benchmarkOSWrite(b, 4<<10, 512)
-	})
-	b.Run("w2_4kb", func(b *testing.B) {
-		benchmarkOSWrite(b, 4<<10, 2)
-	})
-	b.Run("w8_4kb", func(b *testing.B) {
-		benchmarkWrite(b, 4<<10, 8)
-	})
-	b.Run("w32_10mb", func(b *testing.B) {
-		benchmarkOSWrite(b, 10<<20, 32)
-	})
-	b.Run("w32_100mb", func(b *testing.B) {
-		benchmarkOSWrite(b, 100<<20, 32)
-	})
-	b.Run("w1_4kb", func(b *testing.B) {
-		benchmarkOSWrite(b, 4<<10, 1)
-	})
-	b.Run("w1_1mb", func(b *testing.B) {
-		benchmarkOSWrite(b, 1<<20, 1)
-	})
-	b.Run("w10240_1mb", func(b *testing.B) {
-		benchmarkOSWrite(b, 1<<20, 10240)
-	})
+	for _, w := range []int{1, 2, 4, 8, 16, 32, 512, 1024, 2048} {
+		for _, size := range []int64{4 << 10, 1 << 20, 10 << 20} {
+			w := w
+			size := size
+			b.Run(fmt.Sprintf("w%d_%d", w, size), func(b *testing.B) {
+				benchmarkOSWrite(b, size, w)
+			})
+		}
+	}
 }
 
 func BenchmarkSingleWriter(b *testing.B) {
