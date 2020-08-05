@@ -6,6 +6,7 @@ import (
 	"os"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 
@@ -76,16 +77,18 @@ func benchmarkWrite(b *testing.B, size uint64, n int) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
+	b.SetBytes(int64(size))
 
 	var wg sync.WaitGroup
 	wg.Add(n)
 
+	offset := uint64(0)
 	for i := 0; i < n; i++ {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < b.N; i++ {
 				var sqe uring.SQEntry
-				uring.Writev(&sqe, f.Fd(), vector, uint64(i)*size, 0)
+				uring.Writev(&sqe, f.Fd(), vector, atomic.LoadUint64(&offset), 0)
 				cqe, err := queue.Complete(sqe)
 				if err != nil {
 					b.Error(err)
@@ -93,6 +96,7 @@ func benchmarkWrite(b *testing.B, size uint64, n int) {
 				if cqe.Result() < 0 {
 					b.Errorf("failed with %v", syscall.Errno(-cqe.Result()))
 				}
+				atomic.AddUint64(&offset, size)
 			}
 		}()
 	}
@@ -120,18 +124,21 @@ func benchmarkOSWrite(b *testing.B, size int64, n int) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
+	b.SetBytes(size)
 
 	var wg sync.WaitGroup
 	wg.Add(n)
 
+	offset := int64(0)
 	for i := 0; i < n; i++ {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < b.N; i++ {
-				_, err := f.WriteAt(data, int64(i)*size)
+				_, err := f.WriteAt(data, atomic.LoadInt64(&offset))
 				if err != nil {
 					b.Error(err)
 				}
+				atomic.AddInt64(&offset, size)
 			}
 		}()
 	}
@@ -161,7 +168,7 @@ func BenchmarkSingleWriter(b *testing.B) {
 	require.NoError(b, err)
 	defer os.Remove(f.Name())
 
-	size := uint64(4096)
+	size := uint64(1 << 20)
 	data := make([]byte, size)
 	vector := []syscall.Iovec{
 		{
@@ -172,16 +179,19 @@ func BenchmarkSingleWriter(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
+	b.SetBytes(int64(size))
 
+	offset := uint64(0)
 	requests := make([]*request, b.N)
 	for i := 0; i < b.N; i++ {
 		var sqe uring.SQEntry
-		uring.Writev(&sqe, f.Fd(), vector, uint64(i)*size, 0)
+		uring.Writev(&sqe, f.Fd(), vector, offset, 0)
 		req, err := queue.CompleteAsync(sqe)
 		if err != nil {
 			b.Error(err)
 		}
 		requests[i] = req
+		offset += size
 	}
 	for _, req := range requests {
 		<-req.Wait()
@@ -197,18 +207,21 @@ func BenchmarkParallelOS(b *testing.B) {
 	require.NoError(b, err)
 	defer os.Remove(f.Name())
 
-	size := int64(4096)
+	size := int64(1 << 20)
 	data := make([]byte, size)
 
 	b.ReportAllocs()
 	b.ResetTimer()
+	b.SetBytes(size)
 
+	offset := int64(0)
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_, err := f.WriteAt(data, 0)
+			_, err := f.WriteAt(data, atomic.LoadInt64(&offset))
 			if err != nil {
 				b.Error(err)
 			}
+			atomic.AddInt64(&offset, size)
 		}
 	})
 }
@@ -224,7 +237,7 @@ func BenchmarkParallelQueue(b *testing.B) {
 	require.NoError(b, err)
 	defer os.Remove(f.Name())
 
-	size := uint64(4096)
+	size := uint64(1 << 20)
 	data := make([]byte, size)
 	vector := []syscall.Iovec{
 		{
@@ -233,18 +246,21 @@ func BenchmarkParallelQueue(b *testing.B) {
 		},
 	}
 
+	b.SetBytes(int64(size))
 	b.ReportAllocs()
 	b.ResetTimer()
 
+	offset := uint64(0)
 	b.RunParallel(func(pb *testing.PB) {
 		completions := make([]*request, 0, b.N)
 		for pb.Next() {
 			var sqe uring.SQEntry
-			uring.Writev(&sqe, f.Fd(), vector, 0, 0)
+			uring.Writev(&sqe, f.Fd(), vector, atomic.LoadUint64(&offset), 0)
 			req, err := queue.CompleteAsync(sqe)
 			if err != nil {
 				b.Error(err)
 			}
+			atomic.AddUint64(&offset, size)
 			completions = append(completions, req)
 		}
 		for _, req := range completions {

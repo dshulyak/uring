@@ -9,9 +9,9 @@ import (
 
 // ShardedQueue distributes submissions over several shards, each shard running
 // on its own ring. Completions are reaped using epoll on eventfd of the every ring.
-// In benchmarks is is slightly faster then the regular Queue (500ns on my computer)
-// but regular Queue runs loop for reaping completins, which is less efficient than single epoll.
-// TODO why is it slower then the regular Queue in BenchmarkWrite?
+// Benchmarks are inconclusive, with higher throughpout Sharded is somewhat faster than the
+// regualr Queue, but with submissions that spend more time in kernel - regualr Queue
+// can be as twice as fast as this one.
 type ShardedQueue struct {
 	shards    []int32
 	byEventfd map[int32]*Queue
@@ -21,8 +21,8 @@ type ShardedQueue struct {
 	wg sync.WaitGroup
 }
 
-// NewSharded setup infra required for sharded queue (registers eventds, create epoll instance)
-// and return pointer to the new instance of the sharded queue.
+// NewSharded setups infra required for sharded queue (registers eventds, create epoll instance)
+// and returns the pointer to the new instance of the sharded queue.
 // TODO consider returning errors, instead of panicking
 func NewSharded(rings ...*uring.Ring) *ShardedQueue {
 	shards := make([]int32, len(rings))

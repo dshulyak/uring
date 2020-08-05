@@ -5,6 +5,7 @@ import (
 	"os"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 
@@ -68,7 +69,7 @@ func BenchmarkParallelSharded(b *testing.B) {
 	require.NoError(b, err)
 	defer os.Remove(f.Name())
 
-	var size uint64 = 4096
+	var size uint64 = 1 << 20
 	data := make([]byte, size)
 	vector := []syscall.Iovec{
 		{
@@ -79,17 +80,20 @@ func BenchmarkParallelSharded(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
+	b.SetBytes(int64(size))
 
+	offset := uint64(0)
 	b.RunParallel(func(pb *testing.PB) {
 		completions := make([]*request, 0, b.N)
 		for pb.Next() {
 			var sqe uring.SQEntry
-			uring.Writev(&sqe, f.Fd(), vector, 0, 0)
+			uring.Writev(&sqe, f.Fd(), vector, atomic.LoadUint64(&offset), 0)
 			req, err := queue.CompleteAsync(sqe)
 			if err != nil {
 				b.Error(err)
 			}
 			completions = append(completions, req)
+			atomic.AddUint64(&offset, size)
 		}
 		for _, req := range completions {
 			<-req.Wait()
