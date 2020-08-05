@@ -41,32 +41,23 @@ func (r *request) Dispose() {
 func New(ring *uring.Ring) *Queue {
 	var inflight uint32
 	q := &Queue{
-		requests: make(chan *request, ring.SQSize()),
 		quit:     make(chan struct{}),
 		inflight: &inflight,
 		wakeS:    make(chan struct{}, 1),
 		ring:     ring,
 		results:  make(map[uint64]*request, ring.CQSize()),
 	}
-	q.wg.Add(2)
+	q.wg.Add(1)
 	go q.completionLoop()
-	go q.submitionLoop()
 	return q
 }
 
-// Queue synchronizes access to uring.Ring instance.
-// Future optimizations:
-// - use (lock-free?) buffer for submitting requests
-//   will allow to submit entries in a batch, if they are added concurrently
-// Note:
-// - Completion loop with syscall is always slower.
-//   epoll_wait and uring_enter are both slower with low number of workers.
-//   But it keeps one of the golang P busy. Maybe this tradeoff
+// Queue provides thread safe access to uring.Ring instance.
 type Queue struct {
 	wg   sync.WaitGroup
 	quit chan struct{}
 
-	requests chan *request
+	reqmu sync.Mutex
 
 	rmu     sync.Mutex
 	results map[uint64]*request
@@ -74,41 +65,16 @@ type Queue struct {
 	inflight *uint32
 	wakeS    chan struct{}
 
+	nonce uint32
+
 	ring *uring.Ring
 }
 
-func (q *Queue) Complete(sqe uring.SQEntry) (uring.CQEntry, error) {
-	req := requestPool.Get().(*request)
-	req.sqe = sqe
-
-	select {
-	case q.requests <- req:
-		<-req.ch
-		cqe := req.CQEntry
-		req.Dispose()
-		return cqe, nil
-	case <-q.quit:
-		return uring.CQEntry{}, Closed
-	}
-}
-
-// CompleteAsync will not block, and will allow caller to send many requests
-// before blocking goroutine.
-func (q *Queue) CompleteAsync(sqe uring.SQEntry) (*request, error) {
-	req := requestPool.Get().(*request)
-	req.sqe = sqe
-
-	select {
-	case q.requests <- req:
-		return req, nil
-	case <-q.quit:
-		return nil, Closed
-	}
-}
-
+// completionLoop ...
+// Spinning with gosched allows to reap completions ~20% faster.
 func (q *Queue) completionLoop() {
 	defer q.wg.Done()
-	wake := q.ring.CQSize() - 1
+	wake := q.ring.CQSize()
 	for {
 		cqe, err := q.ring.GetCQEntry(0)
 		if err == syscall.EAGAIN || err == syscall.EINTR {
@@ -131,67 +97,73 @@ func (q *Queue) completionLoop() {
 		req.CQEntry = cqe
 		req.ch <- struct{}{}
 
-		switch atomic.AddUint32(q.inflight, ^uint32(0)) {
-		case wake:
+		if atomic.AddUint32(q.inflight, ^uint32(0)) == wake {
 			q.wakeS <- struct{}{}
 		}
 	}
 }
 
-func (q *Queue) submitionLoop() {
-	defer q.wg.Done()
-	var (
-		active chan *request = q.requests
-		nonce  uint64
-	)
-	for {
+func (q *Queue) CompleteAsync(sqe uring.SQEntry) (*request, error) {
+	q.reqmu.Lock()
+	if atomic.AddUint32(q.inflight, 1) > q.ring.CQSize() {
 		select {
 		case <-q.wakeS:
-			active = q.requests
-		case req := <-active:
-			sqe := req.sqe
-			sqe.SetUserData(nonce)
-
-			q.rmu.Lock()
-			q.results[nonce] = req
-			q.rmu.Unlock()
-
-			_ = q.ring.Push(sqe)
-			_, err := q.ring.Submit(0)
-			if err != nil {
-				// FIXME
-				panic(err)
-			}
-
-			// completionLoop will wait on wakeC only after LoadUint32
-			// returned 0
-			switch atomic.AddUint32(q.inflight, 1) {
-			case q.ring.CQSize():
-				active = nil
-			}
-			nonce++
 		case <-q.quit:
-			var sqe uring.SQEntry
-			uring.Nop(&sqe)
-			sqe.SetUserData(closed)
-
-			_ = q.ring.Push(sqe)
-			_, err := q.ring.Submit(0)
-			if err != nil {
-				//FIXME
-				panic(err)
-			}
-			return
+			q.reqmu.Unlock()
+			return nil, Closed
 		}
 	}
+	sqe.SetUserData(uint64(q.nonce))
+	req := requestPool.Get().(*request)
+
+	q.rmu.Lock()
+	q.results[uint64(q.nonce)] = req
+	q.rmu.Unlock()
+
+	sqe.SetUserData(uint64(q.nonce))
+	_ = q.ring.Flush(sqe)
+
+	q.nonce++
+	q.reqmu.Unlock()
+
+	// submitting sqe in batch doesn't make any substantial difference
+	_, err := q.ring.Enter(1, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+
 }
 
-func (q *Queue) Close() {
+func (q *Queue) Complete(sqe uring.SQEntry) (uring.CQEntry, error) {
+	req, err := q.CompleteAsync(sqe)
+	if err != nil {
+		return uring.CQEntry{}, err
+	}
+	<-req.ch
+	cqe := req.CQEntry
+	req.Dispose()
+	return cqe, nil
+}
+
+func (q *Queue) Close() error {
 	close(q.quit)
+
+	var sqe uring.SQEntry
+	uring.Nop(&sqe)
+	sqe.SetUserData(closed)
+
+	_ = q.ring.Push(sqe)
+	_, err := q.ring.Submit(0)
+	if err != nil {
+		//FIXME
+		return err
+	}
 	q.wg.Wait()
 	for nonce, req := range q.results {
 		req.ch <- struct{}{}
 		delete(q.results, nonce)
 	}
-
+	return nil
 }

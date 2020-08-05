@@ -122,6 +122,10 @@ func (r *Ring) Push(sqes ...SQEntry) uint32 {
 	}
 	return i
 }
+func (r *Ring) Flush(sqes ...SQEntry) uint32 {
+	r.Push(sqes...)
+	return r.flushSq()
+}
 
 func (r *Ring) flushSq() uint32 {
 	toSubmit := r.sq.sqeTail - r.sq.sqeHead
@@ -140,10 +144,7 @@ func (r *Ring) flushSq() uint32 {
 	return toSubmit
 }
 
-// Submit and wait for specified number of entries.
-func (r *Ring) Submit(minComplete uint32) (uint32, error) {
-	// TODO get the actual number of submitted records from flushed sq
-	submitted := r.flushSq()
+func (r *Ring) Enter(submitted uint32, minComplete uint32) (uint32, error) {
 	var flags uint32
 	if r.sqNeedsEnter(submitted, &flags) || minComplete > 0 {
 		if minComplete > 0 || (r.params.Flags&IORING_SETUP_IOPOLL) > 0 {
@@ -152,6 +153,13 @@ func (r *Ring) Submit(minComplete uint32) (uint32, error) {
 		return r.enter(submitted, minComplete, flags)
 	}
 	return 0, nil
+}
+
+// Submit and wait for specified number of entries.
+func (r *Ring) Submit(minComplete uint32) (uint32, error) {
+	// TODO get the actual number of submitted records from flushed sq
+	submitted := r.flushSq()
+	return r.Enter(submitted, minComplete)
 }
 
 // GetCQEntry returns entry from completion queue, performing IO_URING_ENTER syscall if necessary.
