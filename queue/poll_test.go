@@ -1,7 +1,6 @@
 package queue
 
 import (
-	"syscall"
 	"testing"
 
 	"github.com/dshulyak/uring"
@@ -30,9 +29,8 @@ func TestPoll(t *testing.T) {
 			require.NoError(t, err)
 		}
 
-		require.NoError(t, pl.wait(func(evt syscall.EpollEvent) {
-			require.Equal(t, int32(ring.Eventfd()), evt.Fd)
-			require.Equal(t, 1, int(evt.Events))
+		require.NoError(t, pl.wait(func(efd int32) {
+			require.Equal(t, int32(ring.Eventfd()), efd)
 		}))
 
 		for j := 0; j < 3; j++ {

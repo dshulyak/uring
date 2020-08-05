@@ -29,7 +29,7 @@ func (p *poll) addRead(fd int32) error {
 	)
 }
 
-func (p *poll) wait(iter func(syscall.EpollEvent)) error {
+func (p *poll) wait(iter func(int32)) error {
 	for {
 		n, err := syscall.EpollWait(p.fd, p.events, -1)
 		if err == syscall.EINTR {
@@ -42,7 +42,7 @@ func (p *poll) wait(iter func(syscall.EpollEvent)) error {
 			}
 			cnt := *(*uint64)(unsafe.Pointer(&p.buf))
 			for j := uint64(0); j < cnt; j++ {
-				iter(p.events[i])
+				iter(p.events[i].Fd)
 			}
 		}
 

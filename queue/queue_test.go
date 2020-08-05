@@ -1,7 +1,6 @@
 package queue
 
 import (
-	"fmt"
 	"io/ioutil"
 	"os"
 	"sort"
@@ -52,152 +51,6 @@ func TestComplete(t *testing.T) {
 
 }
 
-func benchmarkWrite(b *testing.B, size uint64, n int) {
-	ring, err := uring.Setup(1024, nil)
-	require.NoError(b, err)
-	defer ring.Close()
-	queue := New(ring)
-	defer queue.Close()
-
-	f, err := ioutil.TempFile("", "test")
-	require.NoError(b, err)
-	defer os.Remove(f.Name())
-
-	data := make([]byte, size)
-	vector := []syscall.Iovec{
-		{
-			Base: &data[0],
-			Len:  size,
-		},
-	}
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	b.SetBytes(int64(size))
-
-	var wg sync.WaitGroup
-	wg.Add(n)
-
-	offset := uint64(0)
-	for i := 0; i < n; i++ {
-		go func() {
-			defer wg.Done()
-			for i := 0; i < b.N; i++ {
-				var sqe uring.SQEntry
-				uring.Writev(&sqe, f.Fd(), vector, atomic.LoadUint64(&offset), 0)
-				cqe, err := queue.Complete(sqe)
-				if err != nil {
-					b.Error(err)
-				}
-				if cqe.Result() < 0 {
-					b.Errorf("failed with %v", syscall.Errno(-cqe.Result()))
-				}
-				atomic.AddUint64(&offset, size)
-			}
-		}()
-	}
-	wg.Wait()
-}
-
-func BenchmarkWrite(b *testing.B) {
-	for _, w := range []int{1, 2, 4, 8, 16, 32, 512, 1024, 2048} {
-		for _, size := range []uint64{4 << 10, 1 << 20, 10 << 20} {
-			w := w
-			size := size
-			b.Run(fmt.Sprintf("w%d_%d", w, size), func(b *testing.B) {
-				benchmarkWrite(b, size, w)
-			})
-		}
-	}
-}
-
-func benchmarkOSWrite(b *testing.B, size int64, n int) {
-	f, err := ioutil.TempFile("", "test")
-	require.NoError(b, err)
-	defer os.Remove(f.Name())
-
-	data := make([]byte, size)
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	b.SetBytes(size)
-
-	var wg sync.WaitGroup
-	wg.Add(n)
-
-	offset := int64(0)
-	for i := 0; i < n; i++ {
-		go func() {
-			defer wg.Done()
-			for i := 0; i < b.N; i++ {
-				_, err := f.WriteAt(data, atomic.LoadInt64(&offset))
-				if err != nil {
-					b.Error(err)
-				}
-				atomic.AddInt64(&offset, size)
-			}
-		}()
-	}
-	wg.Wait()
-}
-
-func BenchmarkOSWrite(b *testing.B) {
-	for _, w := range []int{1, 2, 4, 8, 16, 32, 512, 1024, 2048} {
-		for _, size := range []int64{4 << 10, 1 << 20, 10 << 20} {
-			w := w
-			size := size
-			b.Run(fmt.Sprintf("w%d_%d", w, size), func(b *testing.B) {
-				benchmarkOSWrite(b, size, w)
-			})
-		}
-	}
-}
-
-func BenchmarkSingleWriter(b *testing.B) {
-	ring, err := uring.Setup(1024, nil)
-	require.NoError(b, err)
-	defer ring.Close()
-	queue := New(ring)
-	defer queue.Close()
-
-	f, err := ioutil.TempFile("", "test")
-	require.NoError(b, err)
-	defer os.Remove(f.Name())
-
-	size := uint64(1 << 20)
-	data := make([]byte, size)
-	vector := []syscall.Iovec{
-		{
-			Base: &data[0],
-			Len:  size,
-		},
-	}
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	b.SetBytes(int64(size))
-
-	offset := uint64(0)
-	requests := make([]*request, b.N)
-	for i := 0; i < b.N; i++ {
-		var sqe uring.SQEntry
-		uring.Writev(&sqe, f.Fd(), vector, offset, 0)
-		req, err := queue.CompleteAsync(sqe)
-		if err != nil {
-			b.Error(err)
-		}
-		requests[i] = req
-		offset += size
-	}
-	for _, req := range requests {
-		<-req.Wait()
-		if req.Result() < 0 {
-			b.Errorf("failed with %v", req.Result())
-		}
-		req.Dispose()
-	}
-}
-
 func BenchmarkParallelOS(b *testing.B) {
 	f, err := ioutil.TempFile("", "test")
 	require.NoError(b, err)
@@ -211,7 +64,9 @@ func BenchmarkParallelOS(b *testing.B) {
 	b.SetBytes(size)
 
 	offset := int64(0)
+	cnt := int64(0)
 	b.RunParallel(func(pb *testing.PB) {
+		atomic.AddInt64(&cnt, 1)
 		for pb.Next() {
 			_, err := f.WriteAt(data, atomic.LoadInt64(&offset))
 			if err != nil {

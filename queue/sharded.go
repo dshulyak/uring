@@ -56,13 +56,10 @@ func (q *ShardedQueue) completionLoop() {
 	defer q.wg.Done()
 	for {
 		exit := false
-		if err := q.poll.wait(func(evt syscall.EpollEvent) {
-			queue := q.byEventfd[evt.Fd]
-			for i := uint32(0); i < evt.Events; i++ {
-				if !queue.TryComplete() {
-					exit = true
-					return
-				}
+		if err := q.poll.wait(func(efd int32) {
+			if !q.byEventfd[efd].TryComplete() {
+				exit = true
+				return
 			}
 		}); err != nil {
 			panic(err)
