@@ -52,10 +52,14 @@ func TestComplete(t *testing.T) {
 }
 
 func benchmarkWrite(b *testing.B, size uint64, n int) {
-	ring, err := uring.Setup(1024, nil)
-	require.NoError(b, err)
-	defer ring.Close()
-	queue := New(ring)
+	rings := make([]*uring.Ring, 8)
+	var err error
+	for i := range rings {
+		rings[i], err = uring.Setup(512, nil)
+		require.NoError(b, err)
+		defer rings[i].Close()
+	}
+	queue := NewSharded(rings...)
 	defer queue.Close()
 
 	f, err := ioutil.TempFile("", "test")
@@ -186,4 +190,70 @@ func BenchmarkSingleWriter(b *testing.B) {
 		}
 		req.Dispose()
 	}
+}
+
+func BenchmarkParallelOS(b *testing.B) {
+	f, err := ioutil.TempFile("", "test")
+	require.NoError(b, err)
+	defer os.Remove(f.Name())
+
+	size := int64(4096)
+	data := make([]byte, size)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			_, err := f.WriteAt(data, 0)
+			if err != nil {
+				b.Error(err)
+			}
+		}
+	})
+}
+
+func BenchmarkParallelQueue(b *testing.B) {
+	ring, err := uring.Setup(1024, nil)
+	require.NoError(b, err)
+	defer ring.Close()
+	queue := New(ring)
+	defer queue.Close()
+
+	f, err := ioutil.TempFile("", "test")
+	require.NoError(b, err)
+	defer os.Remove(f.Name())
+
+	size := uint64(4096)
+	data := make([]byte, size)
+	vector := []syscall.Iovec{
+		{
+			Base: &data[0],
+			Len:  size,
+		},
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	b.RunParallel(func(pb *testing.PB) {
+		completions := make([]*request, 0, b.N)
+		for pb.Next() {
+			var sqe uring.SQEntry
+			uring.Writev(&sqe, f.Fd(), vector, 0, 0)
+			req, err := queue.CompleteAsync(sqe)
+			if err != nil {
+				b.Error(err)
+			}
+			completions = append(completions, req)
+		}
+		for _, req := range completions {
+			<-req.Wait()
+			cqe := req.CQEntry
+			req.Dispose()
+			if cqe.Result() < 0 {
+				b.Errorf("failed with %v", syscall.Errno(-cqe.Result()))
+			}
+		}
+	})
 }

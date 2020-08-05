@@ -9,7 +9,9 @@ import (
 
 // ShardedQueue distributes submissions over several shards, each shard running
 // on its own ring. Completions are reaped using epoll on eventfd of the every ring.
-// In benchmarks 20-30% slower than the regular Queue.
+// In benchmarks is is slightly faster then the regular Queue (500ns on my computer)
+// but regular Queue runs loop for reaping completins, which is less efficient than single epoll.
+// TODO why is it slower then the regular Queue in BenchmarkWrite?
 type ShardedQueue struct {
 	shards    []int32
 	byEventfd map[int32]*Queue
