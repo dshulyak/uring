@@ -139,6 +139,7 @@ func (q *Queue) CompleteAsync(sqe uring.SQEntry) (*request, error) {
 
 	// submitting sqe in batch doesn't make any substantial difference
 	_, err := q.ring.Enter(1, 0)
+
 	if err != nil {
 		return nil, err
 	}

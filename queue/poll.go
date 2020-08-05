@@ -2,6 +2,7 @@ package queue
 
 import (
 	"syscall"
+	"unsafe"
 )
 
 func newPoll(n int) (*poll, error) {
@@ -15,12 +16,14 @@ func newPoll(n int) (*poll, error) {
 type poll struct {
 	fd int // epoll fd
 
+	buf    [8]byte
 	events []syscall.EpollEvent
 }
 
 func (p *poll) addRead(fd int32) error {
 	return syscall.EpollCtl(p.fd, syscall.EPOLL_CTL_ADD, int(fd),
-		&syscall.EpollEvent{Fd: fd,
+		&syscall.EpollEvent{
+			Fd:     fd,
 			Events: syscall.EPOLLIN,
 		},
 	)
@@ -33,8 +36,16 @@ func (p *poll) wait(iter func(syscall.EpollEvent)) error {
 			continue
 		}
 		for i := 0; i < n; i++ {
-			iter(p.events[i])
+			_, err := syscall.Read(int(p.events[i].Fd), p.buf[:])
+			if err != nil {
+				panic(err)
+			}
+			cnt := *(*uint64)(unsafe.Pointer(&p.buf))
+			for j := uint64(0); j < cnt; j++ {
+				iter(p.events[i])
+			}
 		}
+
 		return err
 	}
 }

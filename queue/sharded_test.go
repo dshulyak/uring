@@ -15,7 +15,7 @@ import (
 )
 
 func TestSharded(t *testing.T) {
-	rings := make([]*uring.Ring, 8)
+	rings := make([]*uring.Ring, 1)
 	var err error
 	for i := range rings {
 		rings[i], err = uring.Setup(64, nil)
@@ -35,7 +35,7 @@ func TestSharded(t *testing.T) {
 				var sqe uring.SQEntry
 				uring.Nop(&sqe)
 				cqe, err := queue.Complete(sqe)
-				if assert.NoError(t, err) {
+				if !assert.NoError(t, err) {
 					return
 				}
 				results <- cqe
@@ -49,6 +49,7 @@ func TestSharded(t *testing.T) {
 		data = append(data, int(cqe.UserData()))
 	}
 	sort.Ints(data)
+	require.Len(t, data, 10000)
 	for i := range data {
 		require.Equal(t, i, int(data[i]))
 	}
