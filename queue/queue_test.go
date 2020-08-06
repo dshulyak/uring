@@ -52,11 +52,11 @@ func TestComplete(t *testing.T) {
 }
 
 func BenchmarkParallelOS(b *testing.B) {
-	f, err := ioutil.TempFile("", "test")
+	f, err := ioutil.TempFile("", "test-os-")
 	require.NoError(b, err)
 	defer os.Remove(f.Name())
 
-	size := int64(1 << 20)
+	size := int64(256 << 10)
 	data := make([]byte, size)
 
 	b.ReportAllocs()
@@ -64,9 +64,7 @@ func BenchmarkParallelOS(b *testing.B) {
 	b.SetBytes(size)
 
 	offset := int64(0)
-	cnt := int64(0)
 	b.RunParallel(func(pb *testing.PB) {
-		atomic.AddInt64(&cnt, 1)
 		for pb.Next() {
 			_, err := f.WriteAt(data, atomic.LoadInt64(&offset))
 			if err != nil {
@@ -78,17 +76,20 @@ func BenchmarkParallelOS(b *testing.B) {
 }
 
 func BenchmarkParallelQueue(b *testing.B) {
-	ring, err := uring.Setup(1024, nil)
+	ring, err := uring.Setup(1024, &uring.IOUringParams{
+		CQEntries: 8 * 1024,
+		Flags:     uring.IORING_SETUP_CQSIZE,
+	})
 	require.NoError(b, err)
 	defer ring.Close()
 	queue := New(ring)
 	defer queue.Close()
 
-	f, err := ioutil.TempFile("", "test")
+	f, err := ioutil.TempFile("", "test-queue-")
 	require.NoError(b, err)
 	defer os.Remove(f.Name())
 
-	size := uint64(1 << 20)
+	size := uint64(256 << 10)
 	data := make([]byte, size)
 	vector := []syscall.Iovec{
 		{
@@ -103,21 +104,14 @@ func BenchmarkParallelQueue(b *testing.B) {
 
 	offset := uint64(0)
 	b.RunParallel(func(pb *testing.PB) {
-		completions := make([]*request, 0, b.N)
+		var sqe uring.SQEntry
 		for pb.Next() {
-			var sqe uring.SQEntry
 			uring.Writev(&sqe, f.Fd(), vector, atomic.LoadUint64(&offset), 0)
-			req, err := queue.CompleteAsync(sqe)
+			cqe, err := queue.Complete(sqe)
 			if err != nil {
 				b.Error(err)
 			}
 			atomic.AddUint64(&offset, size)
-			completions = append(completions, req)
-		}
-		for _, req := range completions {
-			<-req.Wait()
-			cqe := req.CQEntry
-			req.Dispose()
 			if cqe.Result() < 0 {
 				b.Errorf("failed with %v", syscall.Errno(-cqe.Result()))
 			}

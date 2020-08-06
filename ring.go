@@ -83,6 +83,10 @@ type Ring struct {
 	eventfd uintptr
 }
 
+func (r *Ring) Fd() uintptr {
+	return uintptr(r.fd)
+}
+
 func (r *Ring) Eventfd() uintptr {
 	return r.eventfd
 }
@@ -97,6 +101,10 @@ func (r *Ring) SQSize() uint32 {
 
 func (r *Ring) SQSlots() uint32 {
 	return *r.sq.ringEntries - (r.sq.sqeTail - atomic.LoadUint32(r.sq.head))
+}
+
+func (r *Ring) SQSlotsAvailable() bool {
+	return *r.sq.ringEntries > (r.sq.sqeTail - atomic.LoadUint32(r.sq.head))
 }
 
 func (r *Ring) CQSlots() uint32 {

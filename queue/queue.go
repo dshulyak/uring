@@ -24,8 +24,6 @@ var requestPool = sync.Pool{
 }
 
 type request struct {
-	sqe uring.SQEntry
-
 	ch chan struct{}
 	uring.CQEntry
 }
@@ -84,6 +82,7 @@ func (q *Queue) completionLoop() {
 
 func (q *Queue) TryComplete() bool {
 	cqe, err := q.ring.GetCQEntry(0)
+	// EAGAIN - if head is equal to tail of completion queue
 	if err == syscall.EAGAIN || err == syscall.EINTR {
 		runtime.Gosched()
 		return true
@@ -132,14 +131,21 @@ func (q *Queue) CompleteAsync(sqe uring.SQEntry) (*request, error) {
 	q.results[uint64(q.nonce)] = req
 	q.rmu.Unlock()
 	sqe.SetUserData(uint64(q.nonce))
-	_ = q.ring.Flush(sqe)
-
 	q.nonce++
-	q.reqCond.L.Unlock()
 
-	// submitting sqe in batch doesn't make any substantial difference
+	q.ring.Flush(sqe)
+	// it is safe to unlock before enter,
+	// if there are more sq slots available after this one was flushed.
+	// if there are no slots after submission was flushed - unlock must be made
+	// only after enter
+	slots := q.ring.SQSlotsAvailable()
+	if slots {
+		q.reqCond.L.Unlock()
+	}
 	_, err := q.ring.Enter(1, 0)
-
+	if !slots {
+		q.reqCond.L.Unlock()
+	}
 	if err != nil {
 		return nil, err
 	}

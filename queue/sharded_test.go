@@ -15,7 +15,7 @@ import (
 )
 
 func TestSharded(t *testing.T) {
-	rings := make([]*uring.Ring, 1)
+	rings := make([]*uring.Ring, 8)
 	var err error
 	for i := range rings {
 		rings[i], err = uring.Setup(64, nil)
@@ -59,7 +59,14 @@ func BenchmarkParallelSharded(b *testing.B) {
 	rings := make([]*uring.Ring, 8)
 	var err error
 	for i := range rings {
-		rings[i], err = uring.Setup(1024, nil)
+		var params *uring.IOUringParams
+		if i > 0 {
+			params = &uring.IOUringParams{
+				Flags: uring.IORING_SETUP_ATTACH_WQ,
+				WQFd:  uint32(rings[0].Fd()),
+			}
+		}
+		rings[i], err = uring.Setup(1024, params)
 		require.NoError(b, err)
 		defer rings[i].Close()
 	}
@@ -70,7 +77,7 @@ func BenchmarkParallelSharded(b *testing.B) {
 	require.NoError(b, err)
 	defer os.Remove(f.Name())
 
-	var size uint64 = 1 << 20
+	var size uint64 = 256 << 10
 	data := make([]byte, size)
 	vector := []syscall.Iovec{
 		{
@@ -85,24 +92,18 @@ func BenchmarkParallelSharded(b *testing.B) {
 
 	offset := uint64(0)
 	b.RunParallel(func(pb *testing.PB) {
-		completions := make([]*request, 0, b.N)
+		var sqe uring.SQEntry
 		for pb.Next() {
-			var sqe uring.SQEntry
 			uring.Writev(&sqe, f.Fd(), vector, atomic.LoadUint64(&offset), 0)
-			req, err := queue.CompleteAsync(sqe)
+			cqe, err := queue.Complete(sqe)
 			if err != nil {
 				b.Error(err)
 			}
-			completions = append(completions, req)
-			atomic.AddUint64(&offset, size)
-		}
-		for _, req := range completions {
-			<-req.Wait()
-			cqe := req.CQEntry
-			req.Dispose()
 			if cqe.Result() < 0 {
 				b.Errorf("failed with %v", syscall.Errno(-cqe.Result()))
 			}
+
+			atomic.AddUint64(&offset, size)
 		}
 	})
 }

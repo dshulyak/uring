@@ -127,8 +127,9 @@ type IOUringParams struct {
 	SQThreadCPU  uint32
 	SQThreadIdle uint32
 	Features     uint32
-	// reserved 16 bytes
-	resv  [4]uint32
+	WQFd         uint32
+	// reserved 12 bytes
+	resv  [3]uint32
 	SQOff SQRingOffsets
 	CQOff CQRingOffsets
 }
