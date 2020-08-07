@@ -89,7 +89,7 @@ func (q *ShardedQueue) Writev(fd uintptr, iovec []syscall.Iovec, offset uint64, 
 }
 
 // CompleteAsync returns future for waiting of the sqe completion with one of the shards.
-func (q *ShardedQueue) CompleteAsync(f func(*uring.SQEntry)) (*request, error) {
+func (q *ShardedQueue) CompleteAsync(f func(*uring.SQEntry)) (*Result, error) {
 	return q.getQueue().CompleteAsync(f)
 }
 

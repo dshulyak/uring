@@ -15,25 +15,25 @@ var (
 	closed uint64 = 1 << 63
 )
 
-var requestPool = sync.Pool{
+var resultPool = sync.Pool{
 	New: func() interface{} {
-		return &request{
+		return &Result{
 			ch: make(chan struct{}, 1),
 		}
 	},
 }
 
-type request struct {
+type Result struct {
 	ch chan struct{}
 	uring.CQEntry
 }
 
-func (r *request) Wait() <-chan struct{} {
+func (r *Result) Wait() <-chan struct{} {
 	return r.ch
 }
 
-func (r *request) Dispose() {
-	requestPool.Put(r)
+func (r *Result) Dispose() {
+	resultPool.Put(r)
 }
 
 func New(ring *uring.Ring) *Queue {
@@ -52,7 +52,7 @@ func newQueue(ring *uring.Ring) *Queue {
 		reqCond:  sync.NewCond(&reqmu),
 		inflight: &inflight,
 		ring:     ring,
-		results:  make(map[uint64]*request, ring.CQSize()),
+		results:  make(map[uint64]*Result, ring.CQSize()),
 	}
 }
 
@@ -63,7 +63,7 @@ type Queue struct {
 	closed  bool
 
 	rmu     sync.Mutex
-	results map[uint64]*request
+	results map[uint64]*Result
 
 	inflight *uint32
 
@@ -127,8 +127,8 @@ func (q *Queue) prepare() (*uring.SQEntry, error) {
 	return q.ring.GetSQEntry(), nil
 }
 
-func (q *Queue) completeAsync(sqe *uring.SQEntry) (*request, error) {
-	req := requestPool.Get().(*request)
+func (q *Queue) completeAsync(sqe *uring.SQEntry) (*Result, error) {
+	req := resultPool.Get().(*Result)
 
 	q.rmu.Lock()
 	q.results[uint64(q.nonce)] = req
@@ -193,7 +193,7 @@ func (q *Queue) Complete(f func(*uring.SQEntry)) (uring.CQEntry, error) {
 	return q.complete(sqe)
 }
 
-func (q *Queue) CompleteAsync(f func(*uring.SQEntry)) (*request, error) {
+func (q *Queue) CompleteAsync(f func(*uring.SQEntry)) (*Result, error) {
 	sqe, err := q.prepare()
 	if err != nil {
 		return nil, err
