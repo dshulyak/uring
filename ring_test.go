@@ -21,12 +21,11 @@ func TestWritev(t *testing.T) {
 	defer ring.Close()
 
 	var offset uint64
-	sqes := [4]SQEntry{}
 	bufs := [4][8]byte{}
 	vectors := [4][]syscall.Iovec{}
 
 	for round := 0; round < 10; round++ {
-		for i := range sqes {
+		for i := 0; i < 4; i++ {
 			buf := bufs[i]
 			_, _ = rand.Read(buf[:])
 			bufs[i] = buf
@@ -36,11 +35,11 @@ func TestWritev(t *testing.T) {
 					Len:  uint64(len(buf)),
 				},
 			}
-			Writev(&sqes[i], f.Fd(), vectors[i], offset, 0)
+			sqe := ring.GetSQEntry()
+			Writev(sqe, f.Fd(), vectors[i], offset, 0)
 			offset += uint64(len(buf))
 		}
 
-		ring.Push(sqes[:]...)
 		_, err = ring.Submit(4)
 		require.NoError(t, err)
 
@@ -71,7 +70,6 @@ func TestReadv(t *testing.T) {
 
 	var offset uint64
 	const num = 3
-	sqes := [num]SQEntry{}
 	bufs := [num][8]byte{}
 	vectors := [num][]syscall.Iovec{}
 
@@ -84,18 +82,18 @@ func TestReadv(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, len(wbuf), n)
 
-		for i := range sqes {
+		for i := 0; i < num; i++ {
+			sqe := ring.GetSQEntry()
 			vectors[i] = []syscall.Iovec{
 				{
 					Base: &bufs[i][0],
 					Len:  uint64(len(bufs[i])),
 				},
 			}
-			Readv(&sqes[i], f.Fd(), vectors[i], offset, 0)
+			Readv(sqe, f.Fd(), vectors[i], offset, 0)
 			offset += uint64(len(bufs[i]))
 		}
 
-		ring.Push(sqes[:]...)
 		_, err = ring.Submit(num)
 		require.NoError(t, err)
 
@@ -138,15 +136,16 @@ func TestCopy(t *testing.T) {
 		},
 	}
 	var (
-		offset      uint64
-		read, write SQEntry
+		offset uint64
 	)
 	for {
-		Readv(&read, from.Fd(), vector, offset, 0)
-		read.SetFlags(IOSQE_IO_LINK)
-		Writev(&write, to.Fd(), vector, offset, 0)
+		read := ring.GetSQEntry()
+		write := ring.GetSQEntry()
 
-		ring.Push(read, write)
+		Readv(read, from.Fd(), vector, offset, 0)
+		read.SetFlags(IOSQE_IO_LINK)
+		Writev(write, to.Fd(), vector, offset, 0)
+
 		_, err := ring.Submit(2)
 		require.NoError(t, err)
 
@@ -214,9 +213,8 @@ func TestNoEnter(t *testing.T) {
 	require.NoError(t, err)
 	defer ring.Close()
 
-	var nop SQEntry
-	Nop(&nop)
-	ring.Push(nop)
+	sqe := ring.GetSQEntry()
+	Nop(sqe)
 	_, err = ring.Submit(0)
 	require.NoError(t, err)
 
@@ -239,10 +237,9 @@ func TestResubmitBeforeCompletion(t *testing.T) {
 	for round := 0; round < 2; round++ {
 		// sq entry can be reused after call to Submit returned
 		for i := uint64(1); i <= uint64(n); i++ {
-			var sqe SQEntry
-			Nop(&sqe)
+			sqe := ring.GetSQEntry()
+			Nop(sqe)
 			sqe.SetUserData(i)
-			ring.Push(sqe)
 		}
 
 		_, err = ring.Submit(0)
@@ -285,10 +282,9 @@ func TestReadWriteFixed(t *testing.T) {
 	}
 
 	require.NoError(t, ring.RegisterBuffers(iovec))
-	var sqe SQEntry
 
-	WriteFixed(&sqe, f.Fd(), iovec[0], 0, 0, 0)
-	ring.Push(sqe)
+	sqe := ring.GetSQEntry()
+	WriteFixed(sqe, f.Fd(), iovec[0], 0, 0, 0)
 	_, err = ring.Submit(1)
 	require.NoError(t, err)
 
@@ -305,8 +301,8 @@ func TestReadWriteFixed(t *testing.T) {
 	_, err = f.WriteAt(in, 0)
 	require.NoError(t, err)
 
-	ReadFixed(&sqe, f.Fd(), iovec[1], 0, 0, 1)
-	ring.Push(sqe)
+	sqe = ring.GetSQEntry()
+	ReadFixed(sqe, f.Fd(), iovec[1], 0, 0, 1)
 	_, err = ring.Submit(1)
 	require.NoError(t, err)
 

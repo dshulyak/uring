@@ -83,10 +83,12 @@ type Ring struct {
 	eventfd uintptr
 }
 
+// Fd is a io_uring fd returned from IO_URING_SETUP syscall.
 func (r *Ring) Fd() uintptr {
 	return uintptr(r.fd)
 }
 
+// Eventfd is a eventfd for this uring instance. Call ring.Setupeventfd() to setup one.
 func (r *Ring) Eventfd() uintptr {
 	return r.eventfd
 }
@@ -111,10 +113,16 @@ func (r *Ring) CQSlots() uint32 {
 	return *r.cq.ringEntries - (atomic.LoadUint32(r.cq.tail) - *r.cq.head)
 }
 
-func (r *Ring) Dropped() uint32 {
-	return atomic.LoadUint32(r.sq.dropped)
-}
-
+// GetSQEntry returns earliest available SQEntry. May return nil if there are
+// not available entries.
+// Entry can be reused after Submit or Enter.
+// Correct usage:
+// sqe := ring.GetSQEntry()
+// ring.Submit(0)
+// ... or ...
+// sqe := ring.GetSQEntry()
+// ring.Flush()
+// ring.Enter(0, 0)
 func (r *Ring) GetSQEntry() *SQEntry {
 	head := atomic.LoadUint32(r.sq.head)
 	next := r.sq.sqeTail + 1
@@ -126,23 +134,8 @@ func (r *Ring) GetSQEntry() *SQEntry {
 	return nil
 }
 
-func (r *Ring) Push(sqes ...SQEntry) uint32 {
-	head := atomic.LoadUint32(r.sq.head)
-	var i uint32
-	for i = 0; i < uint32(len(sqes)); i++ {
-		next := r.sq.sqeTail + 1
-		if next-head <= *r.sq.ringEntries {
-			idx := r.sq.sqeTail & *r.sq.ringMask
-			r.sq.sqes.set(idx, sqes[i])
-			r.sq.sqeTail = next
-		} else {
-			break
-		}
-	}
-	return i
-}
-func (r *Ring) Flush(sqes ...SQEntry) uint32 {
-	r.Push(sqes...)
+// Flush submission queue.
+func (r *Ring) Flush() uint32 {
 	return r.flushSq()
 }
 
@@ -163,6 +156,7 @@ func (r *Ring) flushSq() uint32 {
 	return toSubmit
 }
 
+// Enter io_uring instance. submited and minComplete will be passed as is.
 func (r *Ring) Enter(submitted uint32, minComplete uint32) (uint32, error) {
 	var flags uint32
 	if r.sqNeedsEnter(submitted, &flags) || minComplete > 0 {
@@ -176,7 +170,6 @@ func (r *Ring) Enter(submitted uint32, minComplete uint32) (uint32, error) {
 
 // Submit and wait for specified number of entries.
 func (r *Ring) Submit(minComplete uint32) (uint32, error) {
-	// TODO get the actual number of submitted records from flushed sq
 	submitted := r.flushSq()
 	return r.Enter(submitted, minComplete)
 }
