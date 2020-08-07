@@ -28,7 +28,6 @@ func TestPoll(t *testing.T) {
 			_, err = ring.Submit(0)
 			require.NoError(t, err)
 		}
-
 		require.NoError(t, pl.wait(func(efd int32) {
 			require.Equal(t, int32(ring.Eventfd()), efd)
 		}))

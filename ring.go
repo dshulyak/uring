@@ -33,8 +33,8 @@ func (a uint32Array) set(idx uint32, value uint32) {
 
 type sqeArray uintptr
 
-func (a sqeArray) get(idx uint32) SQEntry {
-	return *(*SQEntry)(unsafe.Pointer(uintptr(a) + uintptr(idx)*sqeSize))
+func (a sqeArray) get(idx uint32) *SQEntry {
+	return (*SQEntry)(unsafe.Pointer(uintptr(a) + uintptr(idx)*sqeSize))
 }
 
 func (a sqeArray) set(idx uint32, value SQEntry) {
@@ -113,6 +113,17 @@ func (r *Ring) CQSlots() uint32 {
 
 func (r *Ring) Dropped() uint32 {
 	return atomic.LoadUint32(r.sq.dropped)
+}
+
+func (r *Ring) GetSQEntry() *SQEntry {
+	head := atomic.LoadUint32(r.sq.head)
+	next := r.sq.sqeTail + 1
+	if next-head <= *r.sq.ringEntries {
+		idx := r.sq.sqeTail & *r.sq.ringMask
+		r.sq.sqeTail = next
+		return r.sq.sqes.get(idx)
+	}
+	return nil
 }
 
 func (r *Ring) Push(sqes ...SQEntry) uint32 {

@@ -184,6 +184,31 @@ func TestRegisterProbe(t *testing.T) {
 	require.True(t, probe.IsSupported(IORING_OP_NOP))
 }
 
+func TestReuseSQEntries(t *testing.T) {
+	ring, err := Setup(2, nil)
+	require.NoError(t, err)
+
+	for r := 0; r < 10; r++ {
+		for i := 1; i <= 2; i++ {
+			sqe := ring.GetSQEntry()
+			sqe.Reset()
+			require.Equal(t, uint64(0), sqe.userData)
+			Nop(sqe)
+			sqe.SetUserData(uint64(i))
+		}
+		n, err := ring.Submit(2)
+		require.NoError(t, err)
+		require.Equal(t, uint32(2), n)
+
+		for i := 1; i <= 2; i++ {
+			cqe, err := ring.GetCQEntry(0)
+			require.NoError(t, err)
+			require.Equal(t, uint64(i), cqe.UserData())
+		}
+	}
+
+}
+
 func TestNoEnter(t *testing.T) {
 	ring, err := Setup(4, nil)
 	require.NoError(t, err)

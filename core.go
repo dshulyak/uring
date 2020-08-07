@@ -1,6 +1,8 @@
 package uring
 
-import "unsafe"
+import (
+	"unsafe"
+)
 
 // syscalls
 const (
@@ -233,6 +235,13 @@ func (e *SQEntry) SetSpliceFdIn(val int32) {
 
 func (e *SQEntry) SetAddr2(addr2 uint64) {
 	e.offset = addr2
+}
+
+var empty = [64]byte{}
+
+func (e *SQEntry) Reset() {
+	buf := (*[64]byte)(unsafe.Pointer(e))
+	copy(buf[:], empty[:])
 }
 
 type CQEntry struct {
