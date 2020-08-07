@@ -15,7 +15,7 @@ import (
 )
 
 func TestSharded(t *testing.T) {
-	rings := make([]*uring.Ring, 8)
+	rings := make([]*uring.Ring, 1)
 	var err error
 	for i := range rings {
 		rings[i], err = uring.Setup(64, nil)
@@ -32,9 +32,9 @@ func TestSharded(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 100; j++ {
-				var sqe uring.SQEntry
-				uring.Nop(&sqe)
-				cqe, err := queue.Complete(sqe)
+				cqe, err := queue.Complete(func(sqe *uring.SQEntry) {
+					uring.Nop(sqe)
+				})
 				if !assert.NoError(t, err) {
 					return
 				}
@@ -56,7 +56,7 @@ func TestSharded(t *testing.T) {
 }
 
 func BenchmarkParallelSharded(b *testing.B) {
-	rings := make([]*uring.Ring, 8)
+	rings := make([]*uring.Ring, 0)
 	var err error
 	for i := range rings {
 		var params *uring.IOUringParams
@@ -92,10 +92,8 @@ func BenchmarkParallelSharded(b *testing.B) {
 
 	offset := uint64(0)
 	b.RunParallel(func(pb *testing.PB) {
-		var sqe uring.SQEntry
 		for pb.Next() {
-			uring.Writev(&sqe, f.Fd(), vector, atomic.LoadUint64(&offset), 0)
-			cqe, err := queue.Complete(sqe)
+			cqe, err := queue.Writev(f.Fd(), vector, atomic.LoadUint64(&offset), 0)
 			if err != nil {
 				b.Error(err)
 			}

@@ -76,11 +76,11 @@ type Queue struct {
 // Spinning with gosched allows to reap completions ~20% faster.
 func (q *Queue) completionLoop() {
 	defer q.wg.Done()
-	for q.TryComplete() {
+	for q.tryComplete() {
 	}
 }
 
-func (q *Queue) TryComplete() bool {
+func (q *Queue) tryComplete() bool {
 	cqe, err := q.ring.GetCQEntry(0)
 	// EAGAIN - if head is equal to tail of completion queue
 	if err == syscall.EAGAIN || err == syscall.EINTR {
@@ -111,7 +111,7 @@ func (q *Queue) TryComplete() bool {
 	return true
 }
 
-func (q *Queue) CompleteAsync(sqe uring.SQEntry) (*request, error) {
+func (q *Queue) prepare() (*uring.SQEntry, error) {
 	q.reqCond.L.Lock()
 	if q.closed {
 		q.reqCond.L.Unlock()
@@ -124,16 +124,20 @@ func (q *Queue) CompleteAsync(sqe uring.SQEntry) (*request, error) {
 			return nil, Closed
 		}
 	}
-	sqe.SetUserData(uint64(q.nonce))
+	return q.ring.GetSQEntry(), nil
+}
+
+func (q *Queue) completeAsync(sqe *uring.SQEntry) (*request, error) {
 	req := requestPool.Get().(*request)
 
 	q.rmu.Lock()
 	q.results[uint64(q.nonce)] = req
 	q.rmu.Unlock()
 	sqe.SetUserData(uint64(q.nonce))
+
 	q.nonce++
 
-	q.ring.Flush(sqe)
+	q.ring.Flush()
 	// it is safe to unlock before enter,
 	// if there are more sq slots available after this one was flushed.
 	// if there are no slots after submission was flushed - unlock must be made
@@ -149,20 +153,53 @@ func (q *Queue) CompleteAsync(sqe uring.SQEntry) (*request, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	return req, nil
-
 }
 
-func (q *Queue) Complete(sqe uring.SQEntry) (uring.CQEntry, error) {
-	req, err := q.CompleteAsync(sqe)
+func (q *Queue) complete(sqe *uring.SQEntry) (uring.CQEntry, error) {
+	req, err := q.completeAsync(sqe)
 	if err != nil {
 		return uring.CQEntry{}, err
 	}
-	<-req.ch
-	cqe := req.CQEntry
+	<-req.Wait()
 	req.Dispose()
-	return cqe, nil
+	return req.CQEntry, nil
+}
+
+func (q *Queue) Writev(fd uintptr, iovec []syscall.Iovec, offset uint64, flags uint32) (uring.CQEntry, error) {
+	sqe, err := q.prepare()
+	if err != nil {
+		return uring.CQEntry{}, err
+	}
+	uring.Writev(sqe, fd, iovec, offset, flags)
+	return q.complete(sqe)
+}
+
+func (q *Queue) Nop() (uring.CQEntry, error) {
+	sqe, err := q.prepare()
+	if err != nil {
+		return uring.CQEntry{}, err
+	}
+	uring.Nop(sqe)
+	return q.complete(sqe)
+}
+
+func (q *Queue) Complete(f func(*uring.SQEntry)) (uring.CQEntry, error) {
+	sqe, err := q.prepare()
+	if err != nil {
+		return uring.CQEntry{}, err
+	}
+	f(sqe)
+	return q.complete(sqe)
+}
+
+func (q *Queue) CompleteAsync(f func(*uring.SQEntry)) (*request, error) {
+	sqe, err := q.prepare()
+	if err != nil {
+		return nil, err
+	}
+	f(sqe)
+	return q.completeAsync(sqe)
 }
 
 func (q *Queue) Close() error {
@@ -171,11 +208,10 @@ func (q *Queue) Close() error {
 	q.reqCond.Broadcast()
 	q.reqCond.L.Unlock()
 
-	var sqe uring.SQEntry
-	uring.Nop(&sqe)
+	sqe := q.ring.GetSQEntry()
+	uring.Nop(sqe)
 	sqe.SetUserData(closed)
 
-	_ = q.ring.Push(sqe)
 	_, err := q.ring.Submit(0)
 	if err != nil {
 		//FIXME

@@ -20,14 +20,13 @@ func TestPoll(t *testing.T) {
 	require.NoError(t, pl.addRead(int32(ring.Eventfd())))
 
 	for i := uint64(1); i < 100; i++ {
-		var sqe uring.SQEntry
-		uring.Nop(&sqe)
-		sqe.SetUserData(i)
 		for j := 0; j < 3; j++ {
-			ring.Push(sqe)
-			_, err = ring.Submit(0)
-			require.NoError(t, err)
+			sqe := ring.GetSQEntry()
+			uring.Nop(sqe)
+			sqe.SetUserData(i)
 		}
+		_, err = ring.Submit(0)
+		require.NoError(t, err)
 		require.NoError(t, pl.wait(func(efd int32) {
 			require.Equal(t, int32(ring.Eventfd()), efd)
 		}))

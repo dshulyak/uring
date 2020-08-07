@@ -57,7 +57,7 @@ func (q *ShardedQueue) completionLoop() {
 	for {
 		exit := false
 		if err := q.poll.wait(func(efd int32) {
-			if !q.byEventfd[efd].TryComplete() {
+			if !q.byEventfd[efd].tryComplete() {
 				exit = true
 				return
 			}
@@ -80,13 +80,17 @@ func (q *ShardedQueue) getQueue() *Queue {
 }
 
 // Complete waits for completion of the sqe with one of the shards.
-func (q *ShardedQueue) Complete(sqe uring.SQEntry) (uring.CQEntry, error) {
-	return q.getQueue().Complete(sqe)
+func (q *ShardedQueue) Complete(f func(*uring.SQEntry)) (uring.CQEntry, error) {
+	return q.getQueue().Complete(f)
 }
 
-// CompleteAsync returns future for waiting of the completion of the sqe with one of the shards.
-func (q *ShardedQueue) CompleteAsync(sqe uring.SQEntry) (*request, error) {
-	return q.getQueue().CompleteAsync(sqe)
+func (q *ShardedQueue) Writev(fd uintptr, iovec []syscall.Iovec, offset uint64, flags uint32) (uring.CQEntry, error) {
+	return q.getQueue().Writev(fd, iovec, offset, flags)
+}
+
+// CompleteAsync returns future for waiting of the sqe completion with one of the shards.
+func (q *ShardedQueue) CompleteAsync(f func(*uring.SQEntry)) (*request, error) {
+	return q.getQueue().CompleteAsync(f)
 }
 
 // Close closes every shard queue, epoll instance and unregister eventfds.

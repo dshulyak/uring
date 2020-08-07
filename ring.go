@@ -117,19 +117,21 @@ func (r *Ring) CQSlots() uint32 {
 // not available entries.
 // Entry can be reused after Submit or Enter.
 // Correct usage:
-// sqe := ring.GetSQEntry()
-// ring.Submit(0)
+//   sqe := ring.GetSQEntry()
+//   ring.Submit(0)
 // ... or ...
-// sqe := ring.GetSQEntry()
-// ring.Flush()
-// ring.Enter(0, 0)
+//   sqe := ring.GetSQEntry()
+//   ring.Flush()
+//   ring.Enter(0, 0)
 func (r *Ring) GetSQEntry() *SQEntry {
 	head := atomic.LoadUint32(r.sq.head)
 	next := r.sq.sqeTail + 1
 	if next-head <= *r.sq.ringEntries {
 		idx := r.sq.sqeTail & *r.sq.ringMask
 		r.sq.sqeTail = next
-		return r.sq.sqes.get(idx)
+		sqe := r.sq.sqes.get(idx)
+		sqe.Reset()
+		return sqe
 	}
 	return nil
 }
@@ -176,6 +178,8 @@ func (r *Ring) Submit(minComplete uint32) (uint32, error) {
 
 // GetCQEntry returns entry from completion queue, performing IO_URING_ENTER syscall if necessary.
 // CQE is copied from mmaped region to avoid additional sync step after CQE was consumed.
+// syscall.EAGAIN will be returned if there are no completed entries and minComplete is 0.
+// syscall.EINTR will be returned if IO_URING_ENTER was interrupted while waiting for completion.
 func (r *Ring) GetCQEntry(minComplete uint32) (CQEntry, error) {
 	for {
 		cqe, found := r.peekCQEntry()
