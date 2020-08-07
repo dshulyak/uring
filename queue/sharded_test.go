@@ -3,6 +3,7 @@ package queue
 import (
 	"io/ioutil"
 	"os"
+	"runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -56,7 +57,7 @@ func TestSharded(t *testing.T) {
 }
 
 func BenchmarkParallelSharded(b *testing.B) {
-	rings := make([]*uring.Ring, 0)
+	rings := make([]*uring.Ring, runtime.NumCPU())
 	var err error
 	for i := range rings {
 		var params *uring.IOUringParams
