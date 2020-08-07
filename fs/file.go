@@ -18,9 +18,9 @@ func (f *File) Fd() uintptr {
 }
 
 func (f *File) Close() error {
-	var sqe uring.SQEntry
-	uring.Close(&sqe, f.fd)
-	cqe, err := f.queue.Complete(sqe)
+	cqe, err := f.queue.Complete(func(sqe *uring.SQEntry) {
+		uring.Close(sqe, f.fd)
+	})
 	if err != nil {
 		return err
 	}
@@ -31,15 +31,15 @@ func (f *File) Close() error {
 }
 
 func (f *File) ReadAt(b []byte, off int64) (int, error) {
-	var sqe uring.SQEntry
 	vector := []syscall.Iovec{
 		{
 			Base: &b[0],
 			Len:  uint64(len(b)),
 		},
 	}
-	uring.Readv(&sqe, f.fd, vector, uint64(off), 0)
-	cqe, err := f.queue.Complete(sqe)
+	cqe, err := f.queue.Complete(func(sqe *uring.SQEntry) {
+		uring.Readv(sqe, f.fd, vector, uint64(off), 0)
+	})
 	if err != nil {
 		return 0, err
 	}
@@ -50,15 +50,13 @@ func (f *File) ReadAt(b []byte, off int64) (int, error) {
 }
 
 func (f *File) WriteAt(b []byte, off int64) (int, error) {
-	var sqe uring.SQEntry
 	vector := []syscall.Iovec{
 		{
 			Base: &b[0],
 			Len:  uint64(len(b)),
 		},
 	}
-	uring.Writev(&sqe, f.fd, vector, uint64(off), 0)
-	cqe, err := f.queue.Complete(sqe)
+	cqe, err := f.queue.Writev(f.fd, vector, uint64(off), 0)
 	if err != nil {
 		return 0, err
 	}

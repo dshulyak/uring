@@ -28,11 +28,9 @@ func (fs *Filesystem) Open(name string, flags int, mode os.FileMode) (*File, err
 	if err != nil {
 		return nil, err
 	}
-
-	var sqe uring.SQEntry
-
-	uring.Openat(&sqe, _AT_FDCWD, _p0, uint32(flags), uint32(mode))
-	cqe, err := fs.queue.Complete(sqe)
+	cqe, err := fs.queue.Complete(func(sqe *uring.SQEntry) {
+		uring.Openat(sqe, _AT_FDCWD, _p0, uint32(flags), uint32(mode))
+	})
 	if err != nil {
 		return nil, err
 	}
