@@ -117,11 +117,35 @@ const (
 	IORING_FEAT_POLL_32BITS
 )
 
-var (
-	sqeSize = unsafe.Sizeof(SQEntry{})
-	cqeSize = unsafe.Sizeof(CQEntry{})
+const (
+	sqeSize uintptr = 64
+	cqeSize uintptr = 16
 )
 
+var (
+	empty [sqeSize]byte
+)
+
+// IOUringParams can be used to control io_uring instance behavior.
+// For more details see manpages for IO_URING_SETUP(2).
+//
+// IORING_SETUP_* can be passed to Flags to enable specific behaviour.
+//
+// Specifying CQEntries will be ignored unlless IORING_SETUP_CQSIZE provided.
+//
+// SQThreadIdle is in milliseconds and controls amount of time SQ thread can be idle
+// before it will be put to sleep by kernel.
+//
+// SQThreadCPU if specified together with IORING_SETUP_SQ_AFF to bound SQ thread to
+// specific CPU.
+//
+// WQFd can be used to share kernel thread worker pool between multiple io_uring
+// instances.
+// Ignored unless specified with IORING_SETUP_ATTACH_WQ.
+// For an example see queue.ShardedQueue and relevant tests.
+//
+// Other fields should be ignored, as they are filled in by the kernel.
+// TODO those fields can be private, SQOff and CQOff should be definitely private
 type IOUringParams struct {
 	SQEntries    uint32
 	CQEntries    uint32
@@ -136,6 +160,7 @@ type IOUringParams struct {
 	CQOff CQRingOffsets
 }
 
+// SQRingOffsets ...
 type SQRingOffsets struct {
 	Head        uint32
 	Tail        uint32
@@ -148,6 +173,7 @@ type SQRingOffsets struct {
 	Resv2       uint64
 }
 
+// CQRingOffsets ...
 type CQRingOffsets struct {
 	Head        uint32
 	Tail        uint32
@@ -160,6 +186,9 @@ type CQRingOffsets struct {
 	Resv2       uint64
 }
 
+// SQEntry is a submission queue entry.
+// In C some of the fields are unions. Golang doesn't support union declaration,
+// instead SQEntry provided setters with descriptive names.
 type SQEntry struct {
 	opcode      uint8
 	flags       uint8
@@ -177,87 +206,108 @@ type SQEntry struct {
 	pad2        [2]uint64
 }
 
+// SetOpcode ...
 func (e *SQEntry) SetOpcode(opcode uint8) {
 	e.opcode = opcode
 }
 
+// SetFlags ...
 func (e *SQEntry) SetFlags(flags uint8) {
 	e.flags = flags
 }
 
+// SetIOPrio ...
 func (e *SQEntry) SetIOPrio(ioprio uint16) {
 	e.ioprio = ioprio
 }
 
+// SetFD ...
 func (e *SQEntry) SetFD(fd int32) {
 	e.fd = fd
 }
 
+// SetUserData ...
 func (e *SQEntry) SetUserData(ud uint64) {
 	e.userData = ud
 }
 
+// SetOffset ...
 func (e *SQEntry) SetOffset(off uint64) {
 	e.offset = off
 }
 
+// SetAddr ...
 func (e *SQEntry) SetAddr(addr uint64) {
 	e.addr = addr
 }
 
+// SetLen ....
 func (e *SQEntry) SetLen(len uint32) {
 	e.len = len
 }
 
+// SetOpcodeFlags ...
 func (e *SQEntry) SetOpcodeFlags(flags uint32) {
 	e.opcodeFlags = flags
 }
 
+// SetBufIndex ...
 func (e *SQEntry) SetBufIndex(index uint16) {
 	e.bufIG = index
 }
 
+// SetBufGroup ...
 func (e *SQEntry) SetBufGroup(group uint16) {
 	e.bufIG = group
 }
 
+// SetPersonality ...
 func (e *SQEntry) SetPersonality(personality uint16) {
 	e.personality = personality
 }
 
+// SetSpliceOffIn ...
 func (e *SQEntry) SetSpliceOffIn(val uint64) {
 	e.addr = val
 }
 
+// SetSpliceFdIn ...
 func (e *SQEntry) SetSpliceFdIn(val int32) {
 	e.spliceFdIn = val
 }
 
+// SetAddr2 ...
 func (e *SQEntry) SetAddr2(addr2 uint64) {
 	e.offset = addr2
 }
 
-var empty = [64]byte{}
-
+// Reset will reset all fields to zeros.
 func (e *SQEntry) Reset() {
-	buf := (*[64]byte)(unsafe.Pointer(e))
+	// this is by far the fastest way to reset sqe memory to zeros
+	// on my machine 2ns vs 60ns for zeroing each byte
+	buf := (*[sqeSize]byte)(unsafe.Pointer(e))
 	copy(buf[:], empty[:])
 }
 
+// CQEntry is a submission queue entry.
+// Filled in by kernel, applications should not modify it.
 type CQEntry struct {
 	userData uint64
 	res      int32
 	flags    uint32
 }
 
+// Result ...
 func (e CQEntry) Result() int32 {
 	return e.res
 }
 
+// Flags ...
 func (e CQEntry) Flags() uint32 {
 	return e.flags
 }
 
+// UserData is a copy of user data from SQEntry.
 func (e CQEntry) UserData() uint64 {
 	return e.userData
 }
