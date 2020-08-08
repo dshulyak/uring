@@ -93,3 +93,49 @@ func Close(sqe *SQEntry, fd uintptr) {
 	sqe.opcode = IORING_OP_CLOSE
 	sqe.fd = int32(fd)
 }
+
+// Accept filler for accept4 syscall (man accept4).
+// sockaddr and size may vary based on the socket type.
+// supported flags - syscall.SOCK_CLOEXEC and SOCK_NONBLOCK.
+func Accept(sqe *SQEntry, fd uintptr, sockaddr, size uint64, flags uint32) {
+	sqe.SetOpcode(IORING_OP_ACCEPT)
+	sqe.SetFD(int32(fd))
+	sqe.SetOpcodeFlags(uint32(flags))
+	sqe.SetAddr(sockaddr)
+	sqe.SetAddr2(size)
+}
+
+// Connect ...
+// man connect
+func Connect(sqe *SQEntry, fd uintptr, sockaddr, size uint64) {
+	sqe.SetOpcode(IORING_OP_CONNECT)
+	sqe.SetFD(int32(fd))
+	sqe.SetAddr(sockaddr)
+	sqe.SetAddr2(size)
+}
+
+// EpollCTL ...
+// op is one of EPOLL_CTL_ADD, EPOLL_CTL_DEL, EPOLL_CTL_MOD
+func EpollCTL(sqe *SQEntry, efd, fd uintptr, op int, event *syscall.EpollEvent) {
+	sqe.SetOpcode(IORING_OP_EPOLL_CTL)
+	sqe.SetFD(int32(efd))
+	sqe.SetAddr(uint64(fd))
+	sqe.SetLen(uint32(op))
+	sqe.SetAddr2((uint64)(uintptr(unsafe.Pointer(event))))
+}
+
+func Send(sqe *SQEntry, fd uintptr, buf []byte, flags uint32) {
+	sqe.SetOpcode(IORING_OP_SEND)
+	sqe.SetFD(int32(fd))
+	sqe.SetAddr((uint64)(uintptr(unsafe.Pointer(&buf[0]))))
+	sqe.SetLen(uint32(len(buf)))
+	sqe.SetOpcodeFlags(flags)
+}
+
+func Recv(sqe *SQEntry, fd uintptr, buf []byte, flags uint32) {
+	sqe.SetOpcode(IORING_OP_RECV)
+	sqe.SetFD(int32(fd))
+	sqe.SetAddr((uint64)(uintptr(unsafe.Pointer(&buf[0]))))
+	sqe.SetLen(uint32(len(buf)))
+	sqe.SetOpcodeFlags(flags)
+}

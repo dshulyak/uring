@@ -166,6 +166,9 @@ func (q *Queue) complete(sqe *uring.SQEntry) (uring.CQEntry, error) {
 	return req.CQEntry, nil
 }
 
+// Writev execute writev syscall. Goroutine will be parked while waiting.
+//
+//go:nosplit
 func (q *Queue) Writev(fd uintptr, iovec []syscall.Iovec, offset uint64, flags uint32) (uring.CQEntry, error) {
 	sqe, err := q.prepare()
 	if err != nil {

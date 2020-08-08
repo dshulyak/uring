@@ -18,7 +18,7 @@ const (
 )
 
 // StatxS is a structure used by STATX(2) syscall.
-// man statx for field description.
+// man statx for fields description.
 type StatxS struct {
 	Mask           uint32
 	Blksize        uint32
@@ -33,8 +33,9 @@ type StatxS struct {
 	AttributesMask uint64
 
 	Atime, Btime, Ctime, Mtime StatxTimestamp
-	RdevMajor                  uint32
-	RdevMinor                  uint32
+
+	RdevMajor uint32
+	RdevMinor uint32
 
 	DevMajor uint32
 	DevMinor uint32
