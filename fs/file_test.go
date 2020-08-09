@@ -103,3 +103,40 @@ func BenchmarkWriteAt(b *testing.B) {
 		}
 	})
 }
+
+func BenchmarkReadAt(b *testing.B) {
+	queue, err := queue.SetupSharded(8, 1024, nil)
+	require.NoError(b, err)
+	defer queue.Close()
+
+	fsm := NewFilesystem(queue)
+
+	f, err := ioutil.TempFile("", "testing-fs-file-")
+	require.NoError(b, err)
+	defer os.Remove(f.Name())
+
+	uf, err := fsm.Open(f.Name(), os.O_RDWR, 0644)
+	require.NoError(b, err)
+
+	size := int64(256 << 10)
+	data := make([]byte, size)
+	offset := int64(0)
+
+	for i := 0; i < b.N; i++ {
+		_, err := f.Write(data)
+		require.NoError(b, err)
+	}
+
+	b.SetBytes(int64(size))
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			_, err := uf.ReadAt(data, atomic.LoadInt64(&offset))
+			if err != nil {
+				b.Error(err)
+			}
+			atomic.AddInt64(&offset, size)
+		}
+	})
+}
