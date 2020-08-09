@@ -15,10 +15,8 @@ import (
 )
 
 func TestComplete(t *testing.T) {
-	ring, err := uring.Setup(32, nil)
+	queue, err := Setup(32, nil)
 	require.NoError(t, err)
-	defer ring.Close()
-	queue := New(ring)
 	defer queue.Close()
 
 	var wg sync.WaitGroup
@@ -28,7 +26,9 @@ func TestComplete(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 100; j++ {
-				cqe, err := queue.Nop()
+				cqe, err := queue.Complete(func(sqe *uring.SQEntry) {
+					uring.Nop(sqe)
+				})
 				if assert.NoError(t, err) {
 					return
 				}
@@ -103,7 +103,9 @@ func BenchmarkParallelQueue(b *testing.B) {
 	offset := uint64(0)
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			cqe, err := queue.Writev(f.Fd(), vector, atomic.LoadUint64(&offset), 0)
+			cqe, err := queue.Complete(func(sqe *uring.SQEntry) {
+				uring.Writev(sqe, f.Fd(), vector, atomic.LoadUint64(&offset), 0)
+			})
 			if err != nil {
 				b.Error(err)
 			}

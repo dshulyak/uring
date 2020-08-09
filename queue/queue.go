@@ -36,8 +36,17 @@ func (r *Result) Dispose() {
 	resultPool.Put(r)
 }
 
+func Setup(size uint, params *uring.IOUringParams) (*Queue, error) {
+	ring, err := uring.Setup(size, params)
+	if err != nil {
+		return nil, err
+	}
+	return New(ring), nil
+}
+
 func New(ring *uring.Ring) *Queue {
 	q := newQueue(ring)
+	q.closeRing = true
 	q.wg.Add(1)
 	go q.completionLoop()
 	return q
@@ -49,27 +58,27 @@ func newQueue(ring *uring.Ring) *Queue {
 		reqmu    sync.Mutex
 	)
 	return &Queue{
-		reqCond:  sync.NewCond(&reqmu),
-		inflight: &inflight,
 		ring:     ring,
+		reqCond:  sync.NewCond(&reqmu),
 		results:  make(map[uint64]*Result, ring.CQSize()),
+		inflight: &inflight,
 	}
 }
 
 // Queue provides thread safe access to uring.Ring instance.
 type Queue struct {
+	ring      *uring.Ring
+	closeRing bool
+
 	reqCond *sync.Cond
 	nonce   uint32
 	closed  bool
+	wg      sync.WaitGroup
 
 	rmu     sync.Mutex
 	results map[uint64]*Result
 
 	inflight *uint32
-
-	ring *uring.Ring
-
-	wg sync.WaitGroup
 }
 
 // completionLoop ...
@@ -166,27 +175,13 @@ func (q *Queue) complete(sqe *uring.SQEntry) (uring.CQEntry, error) {
 	return req.CQEntry, nil
 }
 
-// Writev execute writev syscall. Goroutine will be parked while waiting.
+func (q *Queue) Ring() *uring.Ring {
+	return q.ring
+}
+
+// Complete waits for free submission, submits and waits tills completion.
 //
 //go:nosplit
-func (q *Queue) Writev(fd uintptr, iovec []syscall.Iovec, offset uint64, flags uint32) (uring.CQEntry, error) {
-	sqe, err := q.prepare()
-	if err != nil {
-		return uring.CQEntry{}, err
-	}
-	uring.Writev(sqe, fd, iovec, offset, flags)
-	return q.complete(sqe)
-}
-
-func (q *Queue) Nop() (uring.CQEntry, error) {
-	sqe, err := q.prepare()
-	if err != nil {
-		return uring.CQEntry{}, err
-	}
-	uring.Nop(sqe)
-	return q.complete(sqe)
-}
-
 func (q *Queue) Complete(f func(*uring.SQEntry)) (uring.CQEntry, error) {
 	sqe, err := q.prepare()
 	if err != nil {
@@ -196,6 +191,9 @@ func (q *Queue) Complete(f func(*uring.SQEntry)) (uring.CQEntry, error) {
 	return q.complete(sqe)
 }
 
+// CompleteAsync waits for free submission, submits and returns future-like object.
+//
+//go:nosplit
 func (q *Queue) CompleteAsync(f func(*uring.SQEntry)) (*Result, error) {
 	sqe, err := q.prepare()
 	if err != nil {
@@ -224,6 +222,9 @@ func (q *Queue) Close() error {
 	for nonce, req := range q.results {
 		req.ch <- struct{}{}
 		delete(q.results, nonce)
+	}
+	if q.closeRing {
+		return q.ring.Close()
 	}
 	return nil
 }

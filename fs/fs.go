@@ -10,17 +10,15 @@ import (
 
 const _AT_FDCWD int32 = -0x64
 
-func NewFilesystem(queue *queue.Queue, ring *uring.Ring) *Filesystem {
+func NewFilesystem(queue *queue.ShardedQueue) *Filesystem {
 	return &Filesystem{
 		queue: queue,
-		ring:  ring,
 	}
 }
 
 // Filesystem is a facade for all fs-related functionality.
 type Filesystem struct {
-	queue *queue.Queue
-	ring  *uring.Ring
+	queue *queue.ShardedQueue
 }
 
 func (fs *Filesystem) Open(name string, flags int, mode os.FileMode) (*File, error) {
@@ -37,5 +35,5 @@ func (fs *Filesystem) Open(name string, flags int, mode os.FileMode) (*File, err
 	if cqe.Result() < 0 {
 		return nil, syscall.Errno(-cqe.Result())
 	}
-	return &File{fd: uintptr(cqe.Result()), queue: fs.queue}, nil
+	return &File{fd: uintptr(cqe.Result()), queue: fs.queue, name: name}, nil
 }

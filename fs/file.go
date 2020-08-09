@@ -23,7 +23,7 @@ type File struct {
 	fd   uintptr
 	name string
 
-	queue *queue.Queue
+	queue *queue.ShardedQueue
 }
 
 func (f *File) Name() string {
@@ -82,7 +82,9 @@ func (f *File) WriteAt(b []byte, off int64) (int, error) {
 			Len:  uint64(len(b)),
 		},
 	}
-	return ioRst(f.queue.Writev(f.fd, vector, uint64(off), 0))
+	return ioRst(f.queue.Complete(func(sqe *uring.SQEntry) {
+		uring.Writev(sqe, f.fd, vector, uint64(off), 0)
+	}))
 }
 
 func (f *File) Sync() error {

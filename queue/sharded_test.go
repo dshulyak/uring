@@ -3,7 +3,6 @@ package queue
 import (
 	"io/ioutil"
 	"os"
-	"runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -16,14 +15,8 @@ import (
 )
 
 func TestSharded(t *testing.T) {
-	rings := make([]*uring.Ring, 1)
-	var err error
-	for i := range rings {
-		rings[i], err = uring.Setup(64, nil)
-		require.NoError(t, err)
-		defer rings[i].Close()
-	}
-	queue := NewSharded(rings...)
+	queue, err := SetupSharded(1, 1024, nil)
+	require.NoError(t, err)
 	defer queue.Close()
 
 	var wg sync.WaitGroup
@@ -57,21 +50,7 @@ func TestSharded(t *testing.T) {
 }
 
 func BenchmarkParallelSharded(b *testing.B) {
-	rings := make([]*uring.Ring, runtime.NumCPU())
-	var err error
-	for i := range rings {
-		var params *uring.IOUringParams
-		if i > 0 {
-			params = &uring.IOUringParams{
-				Flags: uring.IORING_SETUP_ATTACH_WQ,
-				WQFd:  uint32(rings[0].Fd()),
-			}
-		}
-		rings[i], err = uring.Setup(1024, params)
-		require.NoError(b, err)
-		defer rings[i].Close()
-	}
-	queue := NewSharded(rings...)
+	queue, err := SetupSharded(8, 1024, nil)
 	defer queue.Close()
 
 	f, err := ioutil.TempFile("", "test")
@@ -94,7 +73,9 @@ func BenchmarkParallelSharded(b *testing.B) {
 	offset := uint64(0)
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			cqe, err := queue.Writev(f.Fd(), vector, atomic.LoadUint64(&offset), 0)
+			cqe, err := queue.Complete(func(sqe *uring.SQEntry) {
+				uring.Writev(sqe, f.Fd(), vector, atomic.LoadUint64(&offset), 0)
+			})
 			if err != nil {
 				b.Error(err)
 			}
