@@ -206,6 +206,10 @@ type SQEntry struct {
 	pad2        [2]uint64
 }
 
+func (e *SQEntry) UserData() uint64 {
+	return e.userData
+}
+
 // SetOpcode ...
 func (e *SQEntry) SetOpcode(opcode uint8) {
 	e.opcode = opcode

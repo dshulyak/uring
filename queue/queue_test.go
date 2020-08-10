@@ -1,7 +1,9 @@
 package queue
 
 import (
+	"encoding/binary"
 	"io/ioutil"
+	"log"
 	"os"
 	"sort"
 	"sync"
@@ -12,6 +14,9 @@ import (
 	"github.com/dshulyak/uring"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"net/http"
+	_ "net/http/pprof"
 )
 
 func TestComplete(t *testing.T) {
@@ -115,4 +120,57 @@ func BenchmarkParallelQueue(b *testing.B) {
 			}
 		}
 	})
+}
+
+var running = false
+
+func TestConcurrentWrites(t *testing.T) {
+	go func() {
+		if !running {
+			log.Println(http.ListenAndServe("localhost:6060", nil))
+			running = true
+		}
+	}()
+	q, err := SetupSharded(8, 4096, &uring.IOUringParams{
+		Flags:     uring.IORING_SETUP_CQSIZE,
+		CQEntries: 8 * 4096,
+	})
+	require.NoError(t, err)
+	defer q.Close()
+
+	f, err := ioutil.TempFile("", "test-concurrent-writes-")
+	require.NoError(t, err)
+	defer os.Remove(f.Name())
+
+	var wg sync.WaitGroup
+	var n int64 = 10000
+	// just to ensure that buffer is in the same place on the stack
+	//buf := make([]byte, n*8)
+
+	// why it works if vectors are only declared here?
+	vectors := make([]syscall.Iovec, n)
+	for i := range vectors {
+		vectors[i] = syscall.Iovec{Len: 8}
+	}
+	for i := int64(0); i < n; i++ {
+		wg.Add(1)
+		go func(i uint64) {
+			buf1 := make([]byte, 8)
+			vectors[i].Base = &buf1[0]
+			binary.BigEndian.PutUint64(buf1[:], uint64(i))
+			_, _ = q.Complete(func(sqe *uring.SQEntry) {
+				uring.Writev(sqe, f.Fd(), vectors[i:i+1], i*8, 0)
+			})
+			wg.Done()
+		}(uint64(i))
+	}
+	wg.Wait()
+
+	buf2 := make([]byte, 8)
+	for i := int64(0); i < n; i++ {
+		_, err := f.ReadAt(buf2, i*8)
+		require.NoError(t, err)
+		rst := binary.BigEndian.Uint64(buf2[:])
+		require.Equal(t, i, int64(rst))
+	}
 }

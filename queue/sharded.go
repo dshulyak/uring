@@ -56,8 +56,14 @@ func NewSharded(queues []*Queue) *ShardedQueue {
 	shards := make([]int32, len(queues))
 	for i, qu := range queues {
 		ring := qu.Ring()
-		if err := ring.SetupEventfd(); err != nil {
-			panic(err)
+		for r := 5; r > 0; r-- {
+			if err := ring.SetupEventfd(); err != nil {
+				if err == syscall.EINTR {
+					continue
+				}
+				panic(err)
+			}
+			break
 		}
 		shards[i] = int32(ring.Eventfd())
 		if err := pl.addRead(int32(ring.Eventfd())); err != nil {

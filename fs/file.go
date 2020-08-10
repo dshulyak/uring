@@ -103,9 +103,10 @@ func (f *File) WriteAt(b []byte, off int64) (n int, err error) {
 			Len:  uint64(len(b)),
 		},
 	}
-	return ioRst(f.queue.Complete(func(sqe *uring.SQEntry) {
+	n, err = ioRst(f.queue.Complete(func(sqe *uring.SQEntry) {
 		uring.Writev(sqe, f.fd, vector, uint64(off), 0)
 	}))
+	return
 }
 
 func (f *File) Sync() error {

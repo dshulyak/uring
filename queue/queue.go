@@ -126,7 +126,8 @@ func (q *Queue) prepare() (*uring.SQEntry, error) {
 		q.reqCond.L.Unlock()
 		return nil, Closed
 	}
-	if inflight := atomic.AddUint32(q.inflight, 1); inflight > q.ring.CQSize() {
+	inflight := atomic.AddUint32(q.inflight, 1)
+	if inflight > q.ring.CQSize() {
 		q.reqCond.Wait()
 		if q.closed {
 			q.reqCond.L.Unlock()
@@ -174,8 +175,9 @@ func (q *Queue) complete(sqe *uring.SQEntry) (uring.CQEntry, error) {
 	if !open {
 		return uring.CQEntry{}, Closed
 	}
+	cqe := req.CQEntry
 	req.Dispose()
-	return req.CQEntry, nil
+	return cqe, nil
 }
 
 func (q *Queue) Ring() *uring.Ring {

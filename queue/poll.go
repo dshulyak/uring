@@ -40,12 +40,12 @@ func (p *poll) wait(iter func(int32)) error {
 			if err != nil {
 				panic(err)
 			}
+			// uint64 in the machine native order
 			cnt := *(*uint64)(unsafe.Pointer(&p.buf))
 			for j := uint64(0); j < cnt; j++ {
 				iter(p.events[i].Fd)
 			}
 		}
-
 		return err
 	}
 }

@@ -96,11 +96,10 @@ func BenchmarkWriteAt(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_, err := uf.WriteAt(data, atomic.LoadInt64(&offset))
+			_, err := uf.WriteAt(data, atomic.AddInt64(&offset, size)-size)
 			if err != nil {
 				b.Error(err)
 			}
-			atomic.AddInt64(&offset, size)
 		}
 	})
 }
@@ -133,11 +132,10 @@ func BenchmarkReadAt(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_, err := uf.ReadAt(data, atomic.LoadInt64(&offset))
+			_, err := uf.ReadAt(data, atomic.AddInt64(&offset, size)-size)
 			if err != nil {
 				b.Error(err)
 			}
-			atomic.AddInt64(&offset, size)
 		}
 	})
 }
