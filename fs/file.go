@@ -47,7 +47,10 @@ func (f *File) Close() error {
 	return nil
 }
 
-func (f *File) Read(b []byte) (int, error) {
+func (f *File) Read(b []byte) (n int, err error) {
+	if len(b) == 0 {
+		return
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return ioRst(f.queue.Complete(func(sqe *uring.SQEntry) {
@@ -55,7 +58,10 @@ func (f *File) Read(b []byte) (int, error) {
 	}))
 }
 
-func (f *File) Write(b []byte) (int, error) {
+func (f *File) Write(b []byte) (n int, err error) {
+	if len(b) == 0 {
+		return
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return ioRst(f.queue.Complete(func(sqe *uring.SQEntry) {
@@ -63,7 +69,10 @@ func (f *File) Write(b []byte) (int, error) {
 	}))
 }
 
-func (f *File) ReadAt(b []byte, off int64) (int, error) {
+func (f *File) ReadAt(b []byte, off int64) (n int, err error) {
+	if len(b) == 0 {
+		return
+	}
 	vector := []syscall.Iovec{
 		{
 			Base: &b[0],
@@ -75,7 +84,10 @@ func (f *File) ReadAt(b []byte, off int64) (int, error) {
 	}))
 }
 
-func (f *File) WriteAt(b []byte, off int64) (int, error) {
+func (f *File) WriteAt(b []byte, off int64) (n int, err error) {
+	if len(b) == 0 {
+		return
+	}
 	vector := []syscall.Iovec{
 		{
 			Base: &b[0],

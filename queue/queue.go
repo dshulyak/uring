@@ -182,7 +182,8 @@ func (q *Queue) Ring() *uring.Ring {
 	return q.ring
 }
 
-// Complete waits for free submission, submits and waits tills completion.
+// Complete blocks until an available submission exists, submits and blocks until completed.
+// Goroutine that executes Complete will be parked.
 //
 //go:nosplit
 func (q *Queue) Complete(f func(*uring.SQEntry)) (uring.CQEntry, error) {
@@ -194,7 +195,11 @@ func (q *Queue) Complete(f func(*uring.SQEntry)) (uring.CQEntry, error) {
 	return q.complete(sqe)
 }
 
-// CompleteAsync waits for free submission, submits and returns future-like object.
+// CompleteAsync blocks until an available submission exists, submits and returns future-like object.
+// Caller must ensure pointers that were used for SQEntry will remain valid until completon.
+// After request completed - caller should call result.Dispose()
+//
+// TODO consider removing this API
 //
 //go:nosplit
 func (q *Queue) CompleteAsync(f func(*uring.SQEntry)) (*Result, error) {
