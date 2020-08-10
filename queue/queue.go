@@ -170,7 +170,10 @@ func (q *Queue) complete(sqe *uring.SQEntry) (uring.CQEntry, error) {
 	if err != nil {
 		return uring.CQEntry{}, err
 	}
-	<-req.Wait()
+	_, open := <-req.Wait()
+	if !open {
+		return uring.CQEntry{}, Closed
+	}
 	req.Dispose()
 	return req.CQEntry, nil
 }
@@ -220,7 +223,7 @@ func (q *Queue) Close() error {
 	}
 	q.wg.Wait()
 	for nonce, req := range q.results {
-		req.ch <- struct{}{}
+		close(req.ch)
 		delete(q.results, nonce)
 	}
 	if q.closeRing {
