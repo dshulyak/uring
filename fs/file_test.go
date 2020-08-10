@@ -1,6 +1,7 @@
 package fs
 
 import (
+	"io"
 	"io/ioutil"
 	"os"
 	"sync/atomic"
@@ -158,4 +159,25 @@ func TestEmptyWrite(t *testing.T) {
 	n, err := uf.WriteAt([]byte{}, 0)
 	require.Equal(t, 0, n)
 	require.NoError(t, err)
+}
+
+func TestEOF(t *testing.T) {
+	queue, err := queue.SetupSharded(8, 1024, nil)
+	require.NoError(t, err)
+	defer queue.Close()
+
+	fsm := NewFilesystem(queue)
+
+	f, err := ioutil.TempFile("", "testing-fs-file-")
+	require.NoError(t, err)
+	defer os.Remove(f.Name())
+
+	uf, err := fsm.Open(f.Name(), os.O_RDWR, 0644)
+	require.NoError(t, err)
+
+	_, err = uf.Write([]byte{1})
+	require.NoError(t, err)
+	n, err := uf.Read(make([]byte, 2))
+	require.Equal(t, 1, n)
+	require.Equal(t, io.EOF, err)
 }

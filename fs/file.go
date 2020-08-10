@@ -1,6 +1,7 @@
 package fs
 
 import (
+	"io"
 	"sync"
 	"syscall"
 
@@ -53,9 +54,13 @@ func (f *File) Read(b []byte) (n int, err error) {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return ioRst(f.queue.Complete(func(sqe *uring.SQEntry) {
+	n, err = ioRst(f.queue.Complete(func(sqe *uring.SQEntry) {
 		uring.Read(sqe, f.fd, b)
 	}))
+	if n < len(b) && err == nil {
+		return n, io.EOF
+	}
+	return n, err
 }
 
 func (f *File) Write(b []byte) (n int, err error) {
@@ -79,9 +84,13 @@ func (f *File) ReadAt(b []byte, off int64) (n int, err error) {
 			Len:  uint64(len(b)),
 		},
 	}
-	return ioRst(f.queue.Complete(func(sqe *uring.SQEntry) {
+	n, err = ioRst(f.queue.Complete(func(sqe *uring.SQEntry) {
 		uring.Readv(sqe, f.fd, vector, uint64(off), 0)
 	}))
+	if n < len(b) && err == nil {
+		return n, io.EOF
+	}
+	return n, err
 }
 
 func (f *File) WriteAt(b []byte, off int64) (n int, err error) {
