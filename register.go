@@ -90,13 +90,13 @@ func (r *Ring) UnregisterFiles() error {
 	return nil
 }
 
-func (r *Ring) RegisterBuffers(iovec []syscall.Iovec) error {
+func (r *Ring) RegisterBuffers(ptr unsafe.Pointer, len uint64) error {
 	_, _, errno := syscall.Syscall6(
 		IO_URING_REGISTER,
 		uintptr(r.fd),
 		IORING_REGISTER_BUFFERS,
-		uintptr(unsafe.Pointer(&iovec[0])),
-		uintptr(len(iovec)), 0, 0)
+		uintptr(ptr),
+		uintptr(len), 0, 0)
 	if errno > 0 {
 		return error(errno)
 	}

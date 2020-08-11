@@ -3,6 +3,7 @@ package queue
 import (
 	"sync"
 	"syscall"
+	"unsafe"
 
 	"github.com/dshulyak/uring"
 )
@@ -143,9 +144,9 @@ func (q *ShardedQueue) CompleteAll(f func(*uring.SQEntry), c func(uring.CQEntry)
 // RegisterBuffers will register buffers on all rings (shards). Note that registration
 // is done with syscall, and will have to wait until rings are idle.
 // TODO test if IORING_OP_PROVIDE_BUFFERS is supported (5.7?)
-func (q *ShardedQueue) RegisterBuffers(iovec []syscall.Iovec) error {
+func (q *ShardedQueue) RegisterBuffers(ptr unsafe.Pointer, len uint64) error {
 	for _, qu := range q.byEventfd {
-		if err := qu.Ring().RegisterBuffers(iovec); err != nil {
+		if err := qu.Ring().RegisterBuffers(ptr, len); err != nil {
 			return err
 		}
 	}

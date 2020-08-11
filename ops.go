@@ -41,23 +41,23 @@ func Readv(sqe *SQEntry, fd uintptr, iovec []syscall.Iovec, offset uint64, flags
 	sqe.addr = (uint64)(uintptr(unsafe.Pointer(&iovec[0])))
 }
 
-func WriteFixed(sqe *SQEntry, fd uintptr, iovec syscall.Iovec, offset uint64, flags uint32, bufIndex uint16) {
+func WriteFixed(sqe *SQEntry, fd uintptr, base *byte, len, offset uint64, flags uint32, bufIndex uint16) {
 	sqe.opcode = IORING_OP_WRITE_FIXED
 	sqe.fd = int32(fd)
-	sqe.len = uint32(iovec.Len)
+	sqe.len = uint32(len)
 	sqe.offset = offset
 	sqe.opcodeFlags = flags
-	sqe.addr = (uint64)(uintptr(unsafe.Pointer(iovec.Base)))
+	sqe.addr = (uint64)(uintptr(unsafe.Pointer(base)))
 	sqe.SetBufIndex(bufIndex)
 }
 
-func ReadFixed(sqe *SQEntry, fd uintptr, iovec syscall.Iovec, offset uint64, flags uint32, bufIndex uint16) {
+func ReadFixed(sqe *SQEntry, fd uintptr, base *byte, len, offset uint64, flags uint32, bufIndex uint16) {
 	sqe.opcode = IORING_OP_READ_FIXED
 	sqe.fd = int32(fd)
-	sqe.len = uint32(iovec.Len)
+	sqe.len = uint32(len)
 	sqe.offset = offset
 	sqe.opcodeFlags = flags
-	sqe.addr = (uint64)(uintptr(unsafe.Pointer(iovec.Base)))
+	sqe.addr = (uint64)(uintptr(unsafe.Pointer(base)))
 	sqe.SetBufIndex(bufIndex)
 }
 
@@ -107,6 +107,7 @@ func Accept(sqe *SQEntry, fd uintptr, sockaddr, size uint64, flags uint32) {
 
 // Connect ...
 // man connect
+// TODO replace sockaddr, size with types
 func Connect(sqe *SQEntry, fd uintptr, sockaddr, size uint64) {
 	sqe.SetOpcode(IORING_OP_CONNECT)
 	sqe.SetFD(int32(fd))

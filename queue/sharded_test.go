@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"unsafe"
 
 	"github.com/dshulyak/uring"
 	"github.com/stretchr/testify/assert"
@@ -65,10 +66,10 @@ func TestRegisterBuffers(t *testing.T) {
 			Len:  size,
 		},
 	}
-	require.NoError(t, queue.RegisterBuffers(iovec))
+	require.NoError(t, queue.RegisterBuffers(unsafe.Pointer(&iovec[0]), 1))
 
 	require.NoError(t, queue.CompleteAll(func(sqe *uring.SQEntry) {
-		uring.WriteFixed(sqe, f.Fd(), iovec[0], 0, 0, 0)
+		uring.WriteFixed(sqe, f.Fd(), iovec[0].Base, iovec[0].Len, 0, 0, 0)
 	}, func(cqe uring.CQEntry) {
 		require.Equal(t, int32(size), cqe.Result(), syscall.Errno(-cqe.Result()))
 	}))

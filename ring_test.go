@@ -7,6 +7,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/stretchr/testify/require"
 )
@@ -281,10 +282,10 @@ func TestReadWriteFixed(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, ring.RegisterBuffers(iovec))
+	require.NoError(t, ring.RegisterBuffers(unsafe.Pointer(&iovec[0]), 2))
 
 	sqe := ring.GetSQEntry()
-	WriteFixed(sqe, f.Fd(), iovec[0], 0, 0, 0)
+	WriteFixed(sqe, f.Fd(), iovec[0].Base, iovec[0].Len, 0, 0, 0)
 	_, err = ring.Submit(1)
 	require.NoError(t, err)
 
@@ -302,7 +303,7 @@ func TestReadWriteFixed(t *testing.T) {
 	require.NoError(t, err)
 
 	sqe = ring.GetSQEntry()
-	ReadFixed(sqe, f.Fd(), iovec[1], 0, 0, 1)
+	ReadFixed(sqe, f.Fd(), iovec[1].Base, iovec[1].Len, 0, 0, 1)
 	_, err = ring.Submit(1)
 	require.NoError(t, err)
 

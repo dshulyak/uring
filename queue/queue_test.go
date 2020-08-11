@@ -3,7 +3,6 @@ package queue
 import (
 	"encoding/binary"
 	"io/ioutil"
-	"log"
 	"os"
 	"sort"
 	"sync"
@@ -14,9 +13,6 @@ import (
 	"github.com/dshulyak/uring"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"net/http"
-	_ "net/http/pprof"
 )
 
 func TestComplete(t *testing.T) {
@@ -122,15 +118,7 @@ func BenchmarkParallelQueue(b *testing.B) {
 	})
 }
 
-var running = false
-
 func TestConcurrentWrites(t *testing.T) {
-	go func() {
-		if !running {
-			log.Println(http.ListenAndServe("localhost:6060", nil))
-			running = true
-		}
-	}()
 	q, err := SetupSharded(8, 4096, &uring.IOUringParams{
 		Flags:     uring.IORING_SETUP_CQSIZE,
 		CQEntries: 8 * 4096,
