@@ -1,7 +1,7 @@
 package uring
 
 const (
-	STATX_TYPE        uint32 = 1 << iota //Want stx_mode & S_IFMT
+	STATX_TYPE        uint32 = 1 << iota // Want stx_mode & S_IFMT
 	STATX_MODE                           // Want stx_mode & ~S_IFMT
 	STATX_NLINK                          // Want stx_nlink
 	STATX_UID                            // Want stx_uid

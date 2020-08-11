@@ -49,6 +49,31 @@ func TestSharded(t *testing.T) {
 	}
 }
 
+func TestRegisterBuffers(t *testing.T) {
+	queue, err := SetupSharded(8, 1024, nil)
+	defer queue.Close()
+
+	f, err := ioutil.TempFile("", "test")
+	require.NoError(t, err)
+	defer os.Remove(f.Name())
+
+	var size uint64 = 4 << 10
+	data := make([]byte, size)
+	iovec := []syscall.Iovec{
+		{
+			Base: &data[0],
+			Len:  size,
+		},
+	}
+	require.NoError(t, queue.RegisterBuffers(iovec))
+
+	require.NoError(t, queue.CompleteAll(func(sqe *uring.SQEntry) {
+		uring.WriteFixed(sqe, f.Fd(), iovec[0], 0, 0, 0)
+	}, func(cqe uring.CQEntry) {
+		require.Equal(t, int32(size), cqe.Result(), syscall.Errno(-cqe.Result()))
+	}))
+}
+
 func BenchmarkParallelSharded(b *testing.B) {
 	queue, err := SetupSharded(8, 1024, nil)
 	defer queue.Close()

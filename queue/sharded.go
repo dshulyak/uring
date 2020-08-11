@@ -118,6 +118,50 @@ func (q *ShardedQueue) CompleteAsync(f func(*uring.SQEntry)) (*Result, error) {
 	return q.getQueue().CompleteAsync(f)
 }
 
+// CompleteAll completes request on each queue. Usefull for registers and tests.
+func (q *ShardedQueue) CompleteAll(f func(*uring.SQEntry), c func(uring.CQEntry)) error {
+	results := make([]*Result, 0, len(q.byEventfd))
+	for _, qu := range q.byEventfd {
+		result, err := qu.CompleteAsync(f)
+		if err != nil {
+			return err
+		}
+		results = append(results, result)
+	}
+	for _, result := range results {
+		_, ok := <-result.Wait()
+		if !ok {
+			return Closed
+		}
+		cqe := result.CQEntry
+		result.Dispose()
+		c(cqe)
+	}
+	return nil
+}
+
+// RegisterBuffers will register buffers on all rings (shards). Note that registration
+// is done with syscall, and will have to wait until rings are idle.
+// TODO test if IORING_OP_PROVIDE_BUFFERS is supported (5.7?)
+func (q *ShardedQueue) RegisterBuffers(iovec []syscall.Iovec) error {
+	for _, qu := range q.byEventfd {
+		if err := qu.Ring().RegisterBuffers(iovec); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// UnregisterBuffers ...
+func (q *ShardedQueue) UnregisterBuffers() error {
+	for _, qu := range q.byEventfd {
+		if err := qu.Ring().UnregisterBuffers(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Close closes every shard queue, epoll instance and unregister eventfds.
 // Close works as follows:
 // - request close on each queue
