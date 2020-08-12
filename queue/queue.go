@@ -134,7 +134,16 @@ func (q *Queue) prepare() (*uring.SQEntry, error) {
 			return nil, Closed
 		}
 	}
-	return q.ring.GetSQEntry(), nil
+	// with sqpoll we cannot rely on mutex that guards Enter
+	// if it happens that all sqe's were filled but sq polling thread didn't
+	// update the head yet - program will crash
+	for {
+		entry := q.ring.GetSQEntry()
+		if entry != nil {
+			return entry, nil
+		}
+		runtime.Gosched()
+	}
 }
 
 func (q *Queue) completeAsync(sqe *uring.SQEntry) (*Result, error) {

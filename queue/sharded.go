@@ -153,6 +153,15 @@ func (q *ShardedQueue) RegisterBuffers(ptr unsafe.Pointer, len uint64) error {
 	return nil
 }
 
+func (q *ShardedQueue) RegisterFiles(fds []int32) error {
+	for _, qu := range q.byEventfd {
+		if err := qu.Ring().RegisterFiles(fds); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // UnregisterBuffers ...
 func (q *ShardedQueue) UnregisterBuffers() error {
 	for _, qu := range q.byEventfd {

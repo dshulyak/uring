@@ -7,7 +7,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/dshulyak/uring"
 	"github.com/dshulyak/uring/fixed"
 	"github.com/dshulyak/uring/queue"
 	"github.com/stretchr/testify/require"
@@ -76,10 +75,7 @@ func TestReadWrite(t *testing.T) {
 }
 
 func BenchmarkWriteAtF(b *testing.B) {
-	queue, err := queue.SetupSharded(8, 1024, &uring.IOUringParams{
-		CQEntries: 4 * 1024,
-		Flags:     uring.IORING_SETUP_CQSIZE,
-	})
+	queue, err := queue.SetupSharded(8, 4096, nil)
 	require.NoError(b, err)
 	defer queue.Close()
 

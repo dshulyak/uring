@@ -2,9 +2,7 @@ package fs
 
 import (
 	"os"
-	"syscall"
 
-	"github.com/dshulyak/uring"
 	"github.com/dshulyak/uring/queue"
 )
 
@@ -22,18 +20,9 @@ type Filesystem struct {
 }
 
 func (fs *Filesystem) Open(name string, flags int, mode os.FileMode) (*File, error) {
-	_p0, err := syscall.BytePtrFromString(name)
+	f, err := os.OpenFile(name, flags, mode)
 	if err != nil {
 		return nil, err
 	}
-	cqe, err := fs.queue.Complete(func(sqe *uring.SQEntry) {
-		uring.Openat(sqe, _AT_FDCWD, _p0, uint32(flags), uint32(mode))
-	})
-	if err != nil {
-		return nil, err
-	}
-	if cqe.Result() < 0 {
-		return nil, syscall.Errno(-cqe.Result())
-	}
-	return &File{fd: uintptr(cqe.Result()), queue: fs.queue, name: name}, nil
+	return &File{fd: f.Fd(), queue: fs.queue, name: name}, nil
 }

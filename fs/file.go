@@ -145,20 +145,3 @@ func (f *File) Datasync() error {
 	}
 	return nil
 }
-
-func (f *File) Statx(flags, mask uint32) (sx uring.StatxS, err error) {
-	_p0, err := syscall.BytePtrFromString(f.name)
-	if err != nil {
-		return sx, err
-	}
-	cqe, err := f.queue.Complete(func(sqe *uring.SQEntry) {
-		uring.Statx(sqe, _AT_FDCWD, _p0, flags, mask, &sx)
-	})
-	if err != nil {
-		return sx, err
-	}
-	if cqe.Result() < 0 {
-		return sx, syscall.Errno(-cqe.Result())
-	}
-	return sx, nil
-}

@@ -76,7 +76,10 @@ func TestRegisterBuffers(t *testing.T) {
 }
 
 func BenchmarkParallelSharded(b *testing.B) {
-	queue, err := SetupSharded(8, 1024, nil)
+	queue, err := SetupSharded(8, 4096, &uring.IOUringParams{
+		CQEntries: 4 * 4096,
+		Flags:     uring.IORING_SETUP_CQSIZE,
+	})
 	defer queue.Close()
 
 	f, err := ioutil.TempFile("", "test")
