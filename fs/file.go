@@ -6,6 +6,7 @@ import (
 	"syscall"
 
 	"github.com/dshulyak/uring"
+	"github.com/dshulyak/uring/fixed"
 	"github.com/dshulyak/uring/queue"
 )
 
@@ -107,6 +108,16 @@ func (f *File) WriteAt(b []byte, off int64) (n int, err error) {
 		uring.Writev(sqe, f.fd, vector, uint64(off), 0)
 	}))
 	return
+}
+
+func (f *File) WriteAtF(b *fixed.Buffer, off int64) (int, error) {
+	lth := b.Len()
+	if lth == 0 {
+		return 0, nil
+	}
+	return ioRst(f.queue.Complete(func(sqe *uring.SQEntry) {
+		uring.WriteFixed(sqe, f.fd, b.Base(), lth, uint64(off), 0, b.Index())
+	}))
 }
 
 func (f *File) Sync() error {

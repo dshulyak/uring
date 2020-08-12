@@ -55,7 +55,7 @@ func BenchmarkParallelOS(b *testing.B) {
 	require.NoError(b, err)
 	defer os.Remove(f.Name())
 
-	size := int64(256 << 10)
+	size := int64(8 << 10)
 	data := make([]byte, size)
 
 	b.ReportAllocs()
@@ -65,11 +65,10 @@ func BenchmarkParallelOS(b *testing.B) {
 	offset := int64(0)
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_, err := f.WriteAt(data, atomic.LoadInt64(&offset))
+			_, err := f.WriteAt(data, atomic.AddInt64(&offset, size)-size)
 			if err != nil {
 				b.Error(err)
 			}
-			atomic.AddInt64(&offset, size)
 		}
 	})
 }
@@ -88,7 +87,7 @@ func BenchmarkParallelQueue(b *testing.B) {
 	require.NoError(b, err)
 	defer os.Remove(f.Name())
 
-	size := uint64(256 << 10)
+	size := uint64(8 << 10)
 	data := make([]byte, size)
 	vector := []syscall.Iovec{
 		{
@@ -105,12 +104,11 @@ func BenchmarkParallelQueue(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			cqe, err := queue.Complete(func(sqe *uring.SQEntry) {
-				uring.Writev(sqe, f.Fd(), vector, atomic.LoadUint64(&offset), 0)
+				uring.Writev(sqe, f.Fd(), vector, atomic.AddUint64(&offset, size)-size, 0)
 			})
 			if err != nil {
 				b.Error(err)
 			}
-			atomic.AddUint64(&offset, size)
 			if cqe.Result() < 0 {
 				b.Errorf("failed with %v", syscall.Errno(-cqe.Result()))
 			}

@@ -83,7 +83,7 @@ func BenchmarkParallelSharded(b *testing.B) {
 	require.NoError(b, err)
 	defer os.Remove(f.Name())
 
-	var size uint64 = 256 << 10
+	var size uint64 = 8 << 10
 	data := make([]byte, size)
 	vector := []syscall.Iovec{
 		{
@@ -100,7 +100,7 @@ func BenchmarkParallelSharded(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			cqe, err := queue.Complete(func(sqe *uring.SQEntry) {
-				uring.Writev(sqe, f.Fd(), vector, atomic.LoadUint64(&offset), 0)
+				uring.Writev(sqe, f.Fd(), vector, atomic.AddUint64(&offset, size)-size, 0)
 			})
 			if err != nil {
 				b.Error(err)
@@ -108,8 +108,6 @@ func BenchmarkParallelSharded(b *testing.B) {
 			if cqe.Result() < 0 {
 				b.Errorf("failed with %v", syscall.Errno(-cqe.Result()))
 			}
-
-			atomic.AddUint64(&offset, size)
 		}
 	})
 }

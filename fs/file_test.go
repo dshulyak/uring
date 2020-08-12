@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/dshulyak/uring"
+	"github.com/dshulyak/uring/fixed"
 	"github.com/dshulyak/uring/queue"
 	"github.com/stretchr/testify/require"
 )
@@ -73,8 +75,11 @@ func TestReadWrite(t *testing.T) {
 	require.Equal(t, in, out)
 }
 
-func BenchmarkWriteAt(b *testing.B) {
-	queue, err := queue.SetupSharded(8, 1024, nil)
+func BenchmarkWriteAtF(b *testing.B) {
+	queue, err := queue.SetupSharded(8, 1024, &uring.IOUringParams{
+		CQEntries: 4 * 1024,
+		Flags:     uring.IORING_SETUP_CQSIZE,
+	})
 	require.NoError(b, err)
 	defer queue.Close()
 
@@ -87,16 +92,21 @@ func BenchmarkWriteAt(b *testing.B) {
 	uf, err := fsm.Open(f.Name(), os.O_RDWR, 0644)
 	require.NoError(b, err)
 
-	size := int64(256 << 10)
-	data := make([]byte, size)
+	size := int64(8 << 10)
+	pool, err := fixed.New(queue, int(size), 1)
+	require.NoError(b, err)
+	defer pool.Close()
 	offset := int64(0)
+
+	buf := pool.Get()
+	buf.SetLen(int(size))
 
 	b.SetBytes(int64(size))
 	b.ReportAllocs()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_, err := uf.WriteAt(data, atomic.AddInt64(&offset, size)-size)
+			_, err := uf.WriteAtF(buf, atomic.AddInt64(&offset, size)-size)
 			if err != nil {
 				b.Error(err)
 			}

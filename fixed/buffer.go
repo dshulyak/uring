@@ -28,6 +28,14 @@ func (b *Buffer) Bytes() []byte {
 	return b.buf
 }
 
-func (b *Buffer) Adjust(pos int) {
-	b.pos += pos
+func (b *Buffer) SetLen(n int) {
+	b.pos = n
+}
+
+func (b *Buffer) NRead(n int) {
+	b.pos -= n
+}
+
+func (b *Buffer) NWrite(n int) {
+	b.pos += n
 }

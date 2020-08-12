@@ -30,7 +30,7 @@ func TestWrite(t *testing.T) {
 		for i := 0; i < n; i++ {
 			buf := pool.Get()
 			defer pool.Put(buf)
-			buf.Adjust(size)
+			buf.NWrite(size)
 
 			require.NoError(t, queue.CompleteAll(func(sqe *uring.SQEntry) {
 				uring.WriteFixed(sqe, f.Fd(), buf.Base(), buf.Len(), 0, 0, buf.Index())
@@ -65,7 +65,7 @@ func TestConcurrentWrites(t *testing.T) {
 			buf := pool.Get()
 			defer pool.Put(buf)
 			binary.BigEndian.PutUint64(buf.Bytes(), i)
-			buf.Adjust(8)
+			buf.NWrite(8)
 			_, _ = queue.Complete(func(sqe *uring.SQEntry) {
 				uring.WriteFixed(sqe, f.Fd(), buf.Base(), buf.Len(), i*8, 0, buf.Index())
 			})
@@ -81,4 +81,20 @@ func TestConcurrentWrites(t *testing.T) {
 		rst := binary.BigEndian.Uint64(buf2[:])
 		require.Equal(t, i, int64(rst))
 	}
+}
+
+func BenchmarkPool(b *testing.B) {
+	queue, err := queue.SetupSharded(8, 1024, nil)
+	require.NoError(b, err)
+	defer queue.Close()
+
+	pool, err := New(queue, 8, 10000)
+	require.NoError(b, err)
+
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			buf := pool.Get()
+			pool.Put(buf)
+		}
+	})
 }
