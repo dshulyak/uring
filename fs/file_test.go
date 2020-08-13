@@ -3,6 +3,7 @@ package fs
 import (
 	"io"
 	"os"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -98,17 +99,27 @@ func BenchmarkWriteAt(b *testing.B) {
 
 	buf := pool.Get()
 
+	workers := 20000
+	n := b.N / workers
+
+	var wg sync.WaitGroup
+
 	b.SetBytes(int64(size))
 	b.ReportAllocs()
 	b.ResetTimer()
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			_, err := f.WriteAt(buf, atomic.AddInt64(&offset, size)-size)
-			if err != nil {
-				b.Error(err)
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < n; i++ {
+				_, err := f.WriteAt(buf, atomic.AddInt64(&offset, size)-size)
+				if err != nil {
+					b.Error(err)
+				}
 			}
-		}
-	})
+		}()
+	}
+	wg.Wait()
 }
 
 func BenchmarkReadAt(b *testing.B) {
@@ -142,14 +153,27 @@ func BenchmarkReadAt(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			_, err := f.ReadAt(buf, atomic.AddInt64(&offset, size)-size)
-			if err != nil {
-				b.Error(err)
+	workers := 20000
+	n := b.N / workers
+
+	var wg sync.WaitGroup
+
+	b.SetBytes(int64(size))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < n; i++ {
+				_, err := f.ReadAt(buf, atomic.AddInt64(&offset, size)-size)
+				if err != nil {
+					b.Error(err)
+				}
 			}
-		}
-	})
+		}()
+	}
+	wg.Wait()
 }
 
 func TestEmptyWrite(t *testing.T) {
