@@ -89,13 +89,11 @@ func BenchmarkWriteOS(b *testing.B) {
 }
 
 func BenchmarkWriteQueue(b *testing.B) {
-	ring, err := uring.Setup(1024, &uring.IOUringParams{
+	queue, err := Setup(1024, &uring.IOUringParams{
 		CQEntries: 8 * 1024,
 		Flags:     uring.IORING_SETUP_CQSIZE,
-	})
+	}, WAIT)
 	require.NoError(b, err)
-	defer ring.Close()
-	queue := New(ring)
 	defer queue.Close()
 
 	f, err := ioutil.TempFile("", "test-queue-")
