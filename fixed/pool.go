@@ -49,14 +49,15 @@ func (p *Pool) Get() *Buffer {
 				return nil
 			}
 		} else {
-			return &Buffer{buf: p.alloc.bufAt(next), poolIndex: next}
+			buf := p.alloc.bufAt(next)
+			return &Buffer{buf: buf, poolIndex: next, Len: uint64(len(buf))}
 		}
 	}
 	idx := p.buffers[0]
 	buf := p.alloc.bufAt(idx)
 	copy(p.buffers, p.buffers[1:])
 	p.buffers = p.buffers[:len(p.buffers)-1]
-	return &Buffer{buf: buf, poolIndex: idx}
+	return &Buffer{buf: buf, poolIndex: idx, Len: uint64(len(buf))}
 }
 
 // Put buffer into the pool. Note that if caller won't put used buffer's into the pool

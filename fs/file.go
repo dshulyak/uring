@@ -2,6 +2,7 @@ package fs
 
 import (
 	"io"
+	"os"
 	"sync"
 	"syscall"
 
@@ -21,6 +22,7 @@ func ioRst(cqe uring.CQEntry, err error) (int, error) {
 }
 
 type File struct {
+	f    *os.File // keep the reference to os.File, otherwise fd will be garbage collected
 	mu   sync.Mutex
 	fd   uintptr
 	name string
@@ -75,49 +77,23 @@ func (f *File) Write(b []byte) (n int, err error) {
 	}))
 }
 
-func (f *File) ReadAt(b []byte, off int64) (n int, err error) {
-	if len(b) == 0 {
-		return
-	}
-	vector := []syscall.Iovec{
-		{
-			Base: &b[0],
-			Len:  uint64(len(b)),
-		},
-	}
-	n, err = ioRst(f.queue.Complete(func(sqe *uring.SQEntry) {
-		uring.Readv(sqe, f.fd, vector, uint64(off), 0)
-	}))
-	if n < len(b) && err == nil {
-		return n, io.EOF
-	}
-	return n, err
-}
-
-func (f *File) WriteAt(b []byte, off int64) (n int, err error) {
-	if len(b) == 0 {
-		return
-	}
-	vector := []syscall.Iovec{
-		{
-			Base: &b[0],
-			Len:  uint64(len(b)),
-		},
-	}
-	n, err = ioRst(f.queue.Complete(func(sqe *uring.SQEntry) {
-		uring.Writev(sqe, f.fd, vector, uint64(off), 0)
-	}))
-	return
-}
-
-func (f *File) WriteAtF(b *fixed.Buffer, off int64) (int, error) {
-	lth := b.Len()
-	if lth == 0 {
+func (f *File) WriteAt(b *fixed.Buffer, off int64) (int, error) {
+	if b.Len == 0 {
 		return 0, nil
 	}
 	return ioRst(f.queue.Complete(func(sqe *uring.SQEntry) {
-		uring.WriteFixed(sqe, f.fd, b.Base(), lth, uint64(off), 0, b.Index())
+		uring.WriteFixed(sqe, f.fd, b.Base(), b.Len, uint64(off), 0, b.Index())
 	}))
+}
+
+func (f *File) ReadAt(b *fixed.Buffer, off int64) (int, error) {
+	if b.Len == 0 {
+		return 0, nil
+	}
+	return ioRst(f.queue.Complete(func(sqe *uring.SQEntry) {
+		uring.ReadFixed(sqe, f.fd, b.Base(), b.Len, uint64(off), 0, b.Index())
+	}))
+
 }
 
 func (f *File) Sync() error {

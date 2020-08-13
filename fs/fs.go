@@ -24,5 +24,5 @@ func (fs *Filesystem) Open(name string, flags int, mode os.FileMode) (*File, err
 	if err != nil {
 		return nil, err
 	}
-	return &File{fd: f.Fd(), queue: fs.queue, name: name}, nil
+	return &File{f: f, fd: f.Fd(), queue: fs.queue, name: name}, nil
 }

@@ -13,5 +13,5 @@ func TempFile(fsm *Filesystem, dir, pattern string) (*File, error) {
 			return nil, err
 		}
 	}
-	return fsm.Open(f.Name(), os.O_RDWR, 0644)
+	return fsm.Open(f.Name(), os.O_RDWR|os.O_APPEND, 0644)
 }

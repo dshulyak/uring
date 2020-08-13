@@ -8,7 +8,7 @@ type Buffer struct {
 	// poolIndex refers to the index in local queue.
 	index, poolIndex int
 	buf              []byte
-	pos              int
+	Len              uint64
 }
 
 // Index return bufIndex in the io_uring instance.
@@ -20,22 +20,6 @@ func (b *Buffer) Base() *byte {
 	return &b.buf[0]
 }
 
-func (b *Buffer) Len() uint64 {
-	return uint64(b.pos)
-}
-
 func (b *Buffer) Bytes() []byte {
 	return b.buf
-}
-
-func (b *Buffer) SetLen(n int) {
-	b.pos = n
-}
-
-func (b *Buffer) NRead(n int) {
-	b.pos -= n
-}
-
-func (b *Buffer) NWrite(n int) {
-	b.pos += n
 }

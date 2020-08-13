@@ -30,10 +30,10 @@ func TestWrite(t *testing.T) {
 		for i := 0; i < n; i++ {
 			buf := pool.Get()
 			defer pool.Put(buf)
-			buf.NWrite(size)
+			buf.Len = uint64(size)
 
 			require.NoError(t, queue.CompleteAll(func(sqe *uring.SQEntry) {
-				uring.WriteFixed(sqe, f.Fd(), buf.Base(), buf.Len(), 0, 0, buf.Index())
+				uring.WriteFixed(sqe, f.Fd(), buf.Base(), buf.Len, 0, 0, buf.Index())
 			}, func(cqe uring.CQEntry) {
 				require.Equal(t, int32(10), cqe.Result(), syscall.Errno(-cqe.Result()))
 			}))
@@ -65,9 +65,9 @@ func TestConcurrentWrites(t *testing.T) {
 			buf := pool.Get()
 			defer pool.Put(buf)
 			binary.BigEndian.PutUint64(buf.Bytes(), i)
-			buf.NWrite(8)
+			buf.Len = 8
 			_, _ = queue.Complete(func(sqe *uring.SQEntry) {
-				uring.WriteFixed(sqe, f.Fd(), buf.Base(), buf.Len(), i*8, 0, buf.Index())
+				uring.WriteFixed(sqe, f.Fd(), buf.Base(), buf.Len, i*8, 0, buf.Index())
 			})
 			wg.Done()
 		}(uint64(i))
