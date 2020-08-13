@@ -48,6 +48,9 @@ type QueueOption func(q *Queue)
 
 // WAIT will make completion loop to Enter with minComplete=1.
 // During idle periods completionLoop thread will sleep.
+//
+// NOTE(dshulyak) for some reason operation on registered files with minComplete=1 hangs.
+// this must be sign of a bug somewhere, but quite a strange thing
 func WAIT(q *Queue) {
 	q.minComplete = 1
 }
