@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"unsafe"
 
 	"github.com/dshulyak/uring"
 )
@@ -268,4 +269,12 @@ func (q *Queue) Close() error {
 		return q.ring.Close()
 	}
 	return nil
+}
+
+func (q *Queue) RegisterBuffers(ptr unsafe.Pointer, len uint64) error {
+	return q.Ring().RegisterBuffers(ptr, len)
+}
+
+func (q *Queue) RegisterFiles(fds []int32) error {
+	return q.Ring().RegisterFiles(fds)
 }
