@@ -132,7 +132,7 @@ func (q *ShardedQueue) CompleteAll(f func(*uring.SQEntry), c func(uring.CQEntry)
 	for _, result := range results {
 		_, ok := <-result.Wait()
 		if !ok {
-			return Closed
+			return ErrClosed
 		}
 		cqe := result.CQEntry
 		result.Dispose()

@@ -11,7 +11,10 @@ import (
 )
 
 var (
-	Closed        = errors.New("closed")
+	// ErrClosed returned if queue was closed.
+	ErrClosed = errors.New("closed")
+	// closed is a bit set to sqe.userData to notify completionLoop that ring
+	// is being closed.
 	closed uint64 = 1 << 63
 )
 
@@ -23,25 +26,49 @@ var resultPool = sync.Pool{
 	},
 }
 
+// Result is an object for sending completion notifications.
 type Result struct {
 	ch chan struct{}
 	uring.CQEntry
 }
 
+// Wait returns channel for waiting. CQEntry is valid only if channel wasn't closed.
 func (r *Result) Wait() <-chan struct{} {
 	return r.ch
 }
 
+// Dispose puts Result back to the reusable pool.
 func (r *Result) Dispose() {
 	resultPool.Put(r)
 }
 
-func Setup(size uint, params *uring.IOUringParams) (*Queue, error) {
+// QueueOption ...
+type QueueOption func(q *Queue)
+
+// WAIT will make completion loop to Enter with minComplete=1.
+// During idle periods completionLoop thread will sleep.
+func WAIT(q *Queue) {
+	q.minComplete = 1
+}
+
+// POLL will make completion loop to poll uring completion queue until
+// entry is available.
+// Polling is somewhat faster but will use more cpu, especially during idle periods.
+func POLL(q *Queue) {
+	q.minComplete = 0
+}
+
+// Setup io_uring instance and return instance of the queue.
+func Setup(size uint, params *uring.IOUringParams, opts ...QueueOption) (*Queue, error) {
 	ring, err := uring.Setup(size, params)
 	if err != nil {
 		return nil, err
 	}
-	return New(ring), nil
+	q := New(ring)
+	for _, opt := range opts {
+		opt(q)
+	}
+	return q, nil
 }
 
 func New(ring *uring.Ring) *Queue {
@@ -67,8 +94,9 @@ func newQueue(ring *uring.Ring) *Queue {
 
 // Queue provides thread safe access to uring.Ring instance.
 type Queue struct {
-	ring      *uring.Ring
-	closeRing bool
+	ring        *uring.Ring
+	closeRing   bool
+	minComplete uint32
 
 	reqCond *sync.Cond
 	nonce   uint32
@@ -90,7 +118,7 @@ func (q *Queue) completionLoop() {
 }
 
 func (q *Queue) tryComplete() bool {
-	cqe, err := q.ring.GetCQEntry(0)
+	cqe, err := q.ring.GetCQEntry(q.minComplete)
 	// EAGAIN - if head is equal to tail of completion queue
 	if err == syscall.EAGAIN || err == syscall.EINTR {
 		runtime.Gosched()
@@ -124,14 +152,14 @@ func (q *Queue) prepare() (*uring.SQEntry, error) {
 	q.reqCond.L.Lock()
 	if q.closed {
 		q.reqCond.L.Unlock()
-		return nil, Closed
+		return nil, ErrClosed
 	}
 	inflight := atomic.AddUint32(q.inflight, 1)
 	if inflight > q.ring.CQSize() {
 		q.reqCond.Wait()
 		if q.closed {
 			q.reqCond.L.Unlock()
-			return nil, Closed
+			return nil, ErrClosed
 		}
 	}
 	// with sqpoll we cannot rely on mutex that guards Enter
@@ -182,7 +210,7 @@ func (q *Queue) complete(sqe *uring.SQEntry) (uring.CQEntry, error) {
 	}
 	_, open := <-req.Wait()
 	if !open {
-		return uring.CQEntry{}, Closed
+		return uring.CQEntry{}, ErrClosed
 	}
 	cqe := req.CQEntry
 	req.Dispose()
@@ -195,8 +223,6 @@ func (q *Queue) Ring() *uring.Ring {
 
 // Complete blocks until an available submission exists, submits and blocks until completed.
 // Goroutine that executes Complete will be parked.
-//
-//go:nosplit
 func (q *Queue) Complete(f func(*uring.SQEntry)) (uring.CQEntry, error) {
 	sqe, err := q.prepare()
 	if err != nil {
@@ -209,10 +235,6 @@ func (q *Queue) Complete(f func(*uring.SQEntry)) (uring.CQEntry, error) {
 // CompleteAsync blocks until an available submission exists, submits and returns future-like object.
 // Caller must ensure pointers that were used for SQEntry will remain valid until completon.
 // After request completed - caller should call result.Dispose()
-//
-// TODO consider removing this API
-//
-//go:nosplit
 func (q *Queue) CompleteAsync(f func(*uring.SQEntry)) (*Result, error) {
 	sqe, err := q.prepare()
 	if err != nil {
