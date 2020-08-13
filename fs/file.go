@@ -22,10 +22,11 @@ func ioRst(cqe uring.CQEntry, err error) (int, error) {
 }
 
 type File struct {
-	f    *os.File // keep the reference to os.File, otherwise fd will be garbage collected
-	mu   sync.Mutex
-	fd   uintptr
-	name string
+	f      *os.File // keep the reference to os.File, otherwise fd will be garbage collected
+	mu     sync.Mutex
+	fd     uintptr
+	name   string
+	regIdx uintptr
 
 	queue *queue.ShardedQueue
 }
@@ -58,7 +59,8 @@ func (f *File) Read(b []byte) (n int, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	n, err = ioRst(f.queue.Complete(func(sqe *uring.SQEntry) {
-		uring.Read(sqe, f.fd, b)
+		uring.Read(sqe, f.regIdx, b)
+		sqe.SetFlags(uring.IOSQE_FIXED_FILE)
 	}))
 	if n < len(b) && err == nil {
 		return n, io.EOF
@@ -73,7 +75,8 @@ func (f *File) Write(b []byte) (n int, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return ioRst(f.queue.Complete(func(sqe *uring.SQEntry) {
-		uring.Write(sqe, f.fd, b)
+		uring.Write(sqe, f.regIdx, b)
+		sqe.SetFlags(uring.IOSQE_FIXED_FILE)
 	}))
 }
 
@@ -82,7 +85,8 @@ func (f *File) WriteAt(b *fixed.Buffer, off int64) (int, error) {
 		return 0, nil
 	}
 	return ioRst(f.queue.Complete(func(sqe *uring.SQEntry) {
-		uring.WriteFixed(sqe, f.fd, b.Base(), b.Len, uint64(off), 0, b.Index())
+		uring.WriteFixed(sqe, f.regIdx, b.Base(), b.Len, uint64(off), 0, b.Index())
+		sqe.SetFlags(uring.IOSQE_FIXED_FILE)
 	}))
 }
 
@@ -91,7 +95,8 @@ func (f *File) ReadAt(b *fixed.Buffer, off int64) (int, error) {
 		return 0, nil
 	}
 	return ioRst(f.queue.Complete(func(sqe *uring.SQEntry) {
-		uring.ReadFixed(sqe, f.fd, b.Base(), b.Len, uint64(off), 0, b.Index())
+		uring.ReadFixed(sqe, f.regIdx, b.Base(), b.Len, uint64(off), 0, b.Index())
+		sqe.SetFlags(uring.IOSQE_FIXED_FILE)
 	}))
 
 }

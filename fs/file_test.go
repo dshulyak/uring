@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/dshulyak/uring"
 	"github.com/dshulyak/uring/fixed"
 	"github.com/dshulyak/uring/queue"
 	"github.com/stretchr/testify/require"
@@ -44,7 +45,7 @@ func TestReadAtWriteAt(t *testing.T) {
 	n, err = f.ReadAt(in, 0)
 	require.NoError(t, err)
 	require.Equal(t, int(out.Len), n)
-	require.Equal(t, out.Bytes(), in.Bytes())
+	require.Equal(t, string(out.Bytes()), string(in.Bytes()))
 
 	require.NoError(t, f.Close())
 }
@@ -56,36 +57,30 @@ func TestReadWrite(t *testing.T) {
 
 	fsm := NewFilesystem(queue)
 
-	// oppened with O_APPEND
 	f, err := TempFile(fsm, "", "testing-fs-file-")
 	require.NoError(t, err)
 	defer os.Remove(f.Name())
 
-	pool, err := fixed.New(queue, 5, 3)
+	pool, err := fixed.New(queue, 5, 2)
 	require.NoError(t, err)
-	in1, in2, out := pool.Get(), pool.Get(), pool.Get()
+	in1, out := pool.Get(), pool.Get()
 
 	copy(in1.Bytes(), []byte("ping1"))
 	n, err := f.Write(in1.Bytes())
 	require.NoError(t, err)
 	require.Equal(t, 5, n)
-
-	copy(in2.Bytes(), []byte("ping2"))
-	n, err = f.Write(in2.Bytes())
-	require.NoError(t, err)
 	require.Equal(t, 5, n)
 
 	_, err = f.Read(out.Bytes())
 	require.NoError(t, err)
 	require.Equal(t, in1.Bytes(), out.Bytes())
-
-	_, err = f.ReadAt(out, 5)
-	require.NoError(t, err)
-	require.Equal(t, in2.Bytes(), out.Bytes())
 }
 
 func BenchmarkWriteAt(b *testing.B) {
-	queue, err := queue.SetupSharded(8, 4096, nil)
+	queue, err := queue.SetupSharded(8, 1024, &uring.IOUringParams{
+		CQEntries: 8 * 1024,
+		Flags:     uring.IORING_SETUP_CQSIZE,
+	})
 	require.NoError(b, err)
 	defer queue.Close()
 
@@ -95,7 +90,7 @@ func BenchmarkWriteAt(b *testing.B) {
 	require.NoError(b, err)
 	defer os.Remove(f.Name())
 
-	size := int64(8 << 10)
+	size := int64(256 << 10)
 	pool, err := fixed.New(queue, int(size), 1)
 	require.NoError(b, err)
 	defer pool.Close()
@@ -117,7 +112,10 @@ func BenchmarkWriteAt(b *testing.B) {
 }
 
 func BenchmarkReadAt(b *testing.B) {
-	queue, err := queue.SetupSharded(8, 1024, nil)
+	queue, err := queue.SetupSharded(8, 1024, &uring.IOUringParams{
+		CQEntries: 8 * 1024,
+		Flags:     uring.IORING_SETUP_CQSIZE,
+	})
 	require.NoError(b, err)
 	defer queue.Close()
 
@@ -127,7 +125,7 @@ func BenchmarkReadAt(b *testing.B) {
 	require.NoError(b, err)
 	defer os.Remove(f.Name())
 
-	size := int64(8 << 10)
+	size := int64(256 << 10)
 	offset := int64(0)
 
 	pool, err := fixed.New(queue, int(size), 1)
