@@ -75,7 +75,7 @@ func TestRegisterBuffers(t *testing.T) {
 	}))
 }
 
-func BenchmarkParallelSharded(b *testing.B) {
+func BenchmarkWriteSharded(b *testing.B) {
 	queue, err := SetupSharded(8, 4096, &uring.IOUringParams{
 		CQEntries: 4 * 4096,
 		Flags:     uring.IORING_SETUP_CQSIZE,
@@ -86,7 +86,7 @@ func BenchmarkParallelSharded(b *testing.B) {
 	require.NoError(b, err)
 	defer os.Remove(f.Name())
 
-	var size uint64 = 8 << 10
+	var size uint64 = 256 << 10
 	data := make([]byte, size)
 	vector := []syscall.Iovec{
 		{
@@ -100,17 +100,15 @@ func BenchmarkParallelSharded(b *testing.B) {
 	b.SetBytes(int64(size))
 
 	offset := uint64(0)
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			cqe, err := queue.Complete(func(sqe *uring.SQEntry) {
-				uring.Writev(sqe, f.Fd(), vector, atomic.AddUint64(&offset, size)-size, 0)
-			})
-			if err != nil {
-				b.Error(err)
-			}
-			if cqe.Result() < 0 {
-				b.Errorf("failed with %v", syscall.Errno(-cqe.Result()))
-			}
+	runConcurrent(b, 20000, func() {
+		cqe, err := queue.Complete(func(sqe *uring.SQEntry) {
+			uring.Writev(sqe, f.Fd(), vector, atomic.AddUint64(&offset, size)-size, 0)
+		})
+		if err != nil {
+			b.Error(err)
+		}
+		if cqe.Result() < 0 {
+			b.Errorf("failed with %v", syscall.Errno(-cqe.Result()))
 		}
 	})
 }

@@ -50,12 +50,27 @@ func TestComplete(t *testing.T) {
 
 }
 
-func BenchmarkParallelOS(b *testing.B) {
+func runConcurrent(b *testing.B, concurrency int, f func()) {
+	n := b.N / concurrency
+	var wg sync.WaitGroup
+	for w := 0; w < concurrency; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < n; i++ {
+				f()
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func BenchmarkWriteOS(b *testing.B) {
 	f, err := ioutil.TempFile("", "test-os-")
 	require.NoError(b, err)
 	defer os.Remove(f.Name())
 
-	size := int64(8 << 10)
+	size := int64(256 << 10)
 	data := make([]byte, size)
 
 	b.ReportAllocs()
@@ -73,7 +88,7 @@ func BenchmarkParallelOS(b *testing.B) {
 	})
 }
 
-func BenchmarkParallelQueue(b *testing.B) {
+func BenchmarkWriteQueue(b *testing.B) {
 	ring, err := uring.Setup(1024, &uring.IOUringParams{
 		CQEntries: 8 * 1024,
 		Flags:     uring.IORING_SETUP_CQSIZE,
@@ -87,7 +102,7 @@ func BenchmarkParallelQueue(b *testing.B) {
 	require.NoError(b, err)
 	defer os.Remove(f.Name())
 
-	size := uint64(8 << 10)
+	size := uint64(256 << 10)
 	data := make([]byte, size)
 	vector := []syscall.Iovec{
 		{
@@ -101,17 +116,16 @@ func BenchmarkParallelQueue(b *testing.B) {
 	b.ResetTimer()
 
 	offset := uint64(0)
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			cqe, err := queue.Complete(func(sqe *uring.SQEntry) {
-				uring.Writev(sqe, f.Fd(), vector, atomic.AddUint64(&offset, size)-size, 0)
-			})
-			if err != nil {
-				b.Error(err)
-			}
-			if cqe.Result() < 0 {
-				b.Errorf("failed with %v", syscall.Errno(-cqe.Result()))
-			}
+
+	runConcurrent(b, 20000, func() {
+		cqe, err := queue.Complete(func(sqe *uring.SQEntry) {
+			uring.Writev(sqe, f.Fd(), vector, atomic.AddUint64(&offset, size)-size, 0)
+		})
+		if err != nil {
+			b.Error(err)
+		}
+		if cqe.Result() < 0 {
+			b.Errorf("failed with %v", syscall.Errno(-cqe.Result()))
 		}
 	})
 }
