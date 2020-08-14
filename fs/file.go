@@ -81,21 +81,21 @@ func (f *File) Write(b []byte) (n int, err error) {
 }
 
 func (f *File) WriteAt(b *fixed.Buffer, off int64) (int, error) {
-	if b.Len == 0 {
+	if b.Len() == 0 {
 		return 0, nil
 	}
 	return ioRst(f.queue.Complete(func(sqe *uring.SQEntry) {
-		uring.WriteFixed(sqe, f.regIdx, b.Base(), b.Len, uint64(off), 0, b.Index())
+		uring.WriteFixed(sqe, f.regIdx, b.Base(), b.Len(), uint64(off), 0, b.Index())
 		sqe.SetFlags(uring.IOSQE_FIXED_FILE)
 	}))
 }
 
 func (f *File) ReadAt(b *fixed.Buffer, off int64) (int, error) {
-	if b.Len == 0 {
+	if b.Len() == 0 {
 		return 0, nil
 	}
 	return ioRst(f.queue.Complete(func(sqe *uring.SQEntry) {
-		uring.ReadFixed(sqe, f.regIdx, b.Base(), b.Len, uint64(off), 0, b.Index())
+		uring.ReadFixed(sqe, f.regIdx, b.Base(), b.Len(), uint64(off), 0, b.Index())
 		sqe.SetFlags(uring.IOSQE_FIXED_FILE)
 	}))
 

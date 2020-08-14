@@ -35,17 +35,17 @@ func TestReadAtWriteAt(t *testing.T) {
 
 	n, err := f.ReadAt(in, 0)
 	require.NoError(t, err)
-	require.Equal(t, int(out.Len), n)
+	require.Equal(t, int(out.Len()), n)
 	require.Equal(t, out.Bytes(), in.Bytes())
 
 	copy(out.Bytes(), []byte("pong"))
 	n, err = f.WriteAt(out, 0)
 	require.NoError(t, err)
-	require.Equal(t, int(out.Len), n)
+	require.Equal(t, int(out.Len()), n)
 
 	n, err = f.ReadAt(in, 0)
 	require.NoError(t, err)
-	require.Equal(t, int(out.Len), n)
+	require.Equal(t, int(out.Len()), n)
 	require.Equal(t, string(out.Bytes()), string(in.Bytes()))
 
 	require.NoError(t, f.Close())
@@ -78,7 +78,7 @@ func TestReadWrite(t *testing.T) {
 }
 
 func BenchmarkWriteAt(b *testing.B) {
-	queue, err := queue.SetupSharded(8, 1024, &uring.IOUringParams{
+	queue, err := queue.SetupSharded(8, 512, &uring.IOUringParams{
 		CQEntries: 8 * 1024,
 		Flags:     uring.IORING_SETUP_CQSIZE,
 	})
@@ -123,7 +123,7 @@ func BenchmarkWriteAt(b *testing.B) {
 }
 
 func BenchmarkReadAt(b *testing.B) {
-	queue, err := queue.SetupSharded(8, 1024, &uring.IOUringParams{
+	queue, err := queue.SetupSharded(8, 64, &uring.IOUringParams{
 		CQEntries: 8 * 1024,
 		Flags:     uring.IORING_SETUP_CQSIZE,
 	})
@@ -191,7 +191,7 @@ func TestEmptyWrite(t *testing.T) {
 	require.NoError(t, err)
 	defer pool.Close()
 	buf := pool.Get()
-	buf.Len = 0
+	buf.B = buf.B[:0]
 
 	n, err := f.WriteAt(buf, 0)
 	require.Equal(t, 0, n)
