@@ -78,8 +78,8 @@ func TestReadWrite(t *testing.T) {
 }
 
 func BenchmarkWriteAt(b *testing.B) {
-	queue, err := queue.SetupSharded(8, 512, &uring.IOUringParams{
-		CQEntries: 8 * 1024,
+	queue, err := queue.SetupSharded(8, 4096, &uring.IOUringParams{
+		CQEntries: 8 * 2048,
 		Flags:     uring.IORING_SETUP_CQSIZE,
 	})
 	require.NoError(b, err)
@@ -99,7 +99,7 @@ func BenchmarkWriteAt(b *testing.B) {
 
 	buf := pool.Get()
 
-	workers := 20000
+	workers := 10000
 	n := b.N / workers
 
 	var wg sync.WaitGroup
@@ -107,6 +107,7 @@ func BenchmarkWriteAt(b *testing.B) {
 	b.SetBytes(int64(size))
 	b.ReportAllocs()
 	b.ResetTimer()
+
 	for w := 0; w < workers; w++ {
 		wg.Add(1)
 		go func() {
@@ -123,7 +124,7 @@ func BenchmarkWriteAt(b *testing.B) {
 }
 
 func BenchmarkReadAt(b *testing.B) {
-	queue, err := queue.SetupSharded(8, 64, &uring.IOUringParams{
+	queue, err := queue.SetupSharded(8, 512, &uring.IOUringParams{
 		CQEntries: 8 * 1024,
 		Flags:     uring.IORING_SETUP_CQSIZE,
 	})
@@ -153,7 +154,7 @@ func BenchmarkReadAt(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	workers := 20000
+	workers := 10000
 	n := b.N / workers
 
 	var wg sync.WaitGroup

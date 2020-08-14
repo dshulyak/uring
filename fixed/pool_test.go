@@ -88,6 +88,7 @@ func BenchmarkPool(b *testing.B) {
 	pool, err := New(queue, 8, 50000)
 	require.NoError(b, err)
 
+	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			buf := pool.Get()

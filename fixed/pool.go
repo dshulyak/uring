@@ -41,12 +41,12 @@ func New(queue *queue.ShardedQueue, bufsize, size int) (*Pool, error) {
 	}, nil
 }
 
-// Pool manages registered offheap buffers. Allocated with MAP_ANON.
+// Pool manages registered offheap buffers. Allocated with MAP_ANON | MAP_PRIVATE.
 // TODO performance is not really excellent, several ideas to try:
-// - backoff on contention (note that runtime.Gosched achieves same purpose)
+// - backoff on contention (runtime.Gosched achieves same purpose)
 // - elimitation array
-// This is still better than mutex-based version (3.5 times faster), but much more worse
-// than simple sync.Pool (15 times slower).
+// This is much better than mutex-based version (3.5 times faster), but much more worse
+// than simple sync.Pool (10 times slower).
 type Pool struct {
 	alloc *allocator
 	head  *node

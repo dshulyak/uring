@@ -80,6 +80,7 @@ func BenchmarkWriteSharded(b *testing.B) {
 		CQEntries: 4 * 4096,
 		Flags:     uring.IORING_SETUP_CQSIZE,
 	})
+	require.NoError(b, err)
 	defer queue.Close()
 
 	f, err := ioutil.TempFile("", "test")
@@ -100,7 +101,7 @@ func BenchmarkWriteSharded(b *testing.B) {
 	b.SetBytes(int64(size))
 
 	offset := uint64(0)
-	runConcurrent(b, 20000, func() {
+	runConcurrent(b, 10000, func() {
 		cqe, err := queue.Complete(func(sqe *uring.SQEntry) {
 			uring.Writev(sqe, f.Fd(), vector, atomic.AddUint64(&offset, size)-size, 0)
 		})
