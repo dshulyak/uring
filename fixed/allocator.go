@@ -16,7 +16,6 @@ var (
 var iovecSize = int(unsafe.Sizeof(syscall.Iovec{}))
 
 type allocator struct {
-	allocated  int // number of currently registered buffers
 	max        int // max number of buffers
 	bufferSize int // requested size of the buffer
 
@@ -52,22 +51,8 @@ func (a *allocator) close() error {
 	return syscall.Munmap(a.mem)
 }
 
-func (a *allocator) next() (int, bool) {
-	if a.allocated == a.max {
-		return -1, false
-	}
-	return a.allocated, true
-}
-
 func (a *allocator) bufAt(pos int) []byte {
-	if pos > a.max {
-		return nil
-	}
 	start := a.buffers + pos*a.bufferSize
 	buf := a.mem[start : start+a.bufferSize]
-	if pos < a.allocated {
-		return buf
-	}
-	a.allocated++
 	return buf
 }

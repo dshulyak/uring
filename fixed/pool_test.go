@@ -85,12 +85,28 @@ func BenchmarkPool(b *testing.B) {
 	require.NoError(b, err)
 	defer queue.Close()
 
-	pool, err := New(queue, 8, 10000)
+	pool, err := New(queue, 8, 50000)
 	require.NoError(b, err)
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			buf := pool.Get()
+			buf.B[0] = 10
+			pool.Put(buf)
+		}
+	})
+}
+
+func BenchmarkSyncPool(b *testing.B) {
+	pool := sync.Pool{
+		New: func() interface{} {
+			return make([]byte, 8)
+		},
+	}
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			buf := pool.Get().([]byte)
+			buf[0] = 10
 			pool.Put(buf)
 		}
 	})

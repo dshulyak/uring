@@ -1,10 +1,19 @@
 package fixed
 
 import (
+	"runtime"
 	"sync"
+	"sync/atomic"
+	"unsafe"
 
 	"github.com/dshulyak/uring/queue"
 )
+
+var bufferPool = sync.Pool{
+	New: func() interface{} {
+		return &Buffer{}
+	},
+}
 
 // New will initialize mmap'ed memory region, of the total size 16 bytes + size*bufsize
 // and register mmap'ed memory as buffer in io_uring.
@@ -17,69 +26,74 @@ func New(queue *queue.ShardedQueue, bufsize, size int) (*Pool, error) {
 	if err := alloc.init(); err != nil {
 		return nil, err
 	}
-
-	var mu sync.Mutex
+	var (
+		head *node
+	)
+	for i := size - 1; i >= 0; i-- {
+		head = &node{
+			next:  head,
+			index: i,
+		}
+	}
 	return &Pool{
-		cond:    sync.NewCond(&mu),
-		alloc:   alloc,
-		buffers: make([]int, 0, size),
+		alloc: alloc,
+		head:  head,
 	}, nil
 }
 
 // Pool manages registered offheap buffers. Allocated with MAP_ANON.
-// TODO this has terrible performance. either shard or use lock free queue to reduce locking.
+// TODO performance is not really excellent, several ideas to try:
+// - backoff on contention (note that runtime.Gosched achieves same purpose)
+// - elimitation array
+// This is still better than mutex-based version (3.5 times faster), but much more worse
+// than simple sync.Pool (15 times slower).
 type Pool struct {
-	cond    *sync.Cond
-	alloc   *allocator
-	buffers []int
+	alloc *allocator
+	head  *node
 }
 
 // Get buffer.
 func (p *Pool) Get() *Buffer {
-	p.cond.L.Lock()
-	if p.buffers == nil {
-		return nil
-	}
-	defer p.cond.L.Unlock()
-	if len(p.buffers) == 0 {
-		next, ok := p.alloc.next()
-		if !ok {
-			p.cond.Wait()
-			if p.buffers == nil {
-				return nil
+	for {
+		old := (*node)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&p.head))))
+		if old != nil {
+			index := old.index
+			next := old.next
+			if atomic.CompareAndSwapPointer((*unsafe.Pointer)(unsafe.Pointer(&p.head)), unsafe.Pointer(old), unsafe.Pointer(next)) {
+				buf := bufferPool.Get().(*Buffer)
+				buf.B = p.alloc.bufAt(index)
+				buf.poolIndex = index
+				buf.index = 0 // placeholder, until i will have more pages
+				return buf
 			}
-		} else {
-			buf := p.alloc.bufAt(next)
-			return &Buffer{B: buf, poolIndex: next}
 		}
+		runtime.Gosched()
 	}
-	idx := p.buffers[0]
-	buf := p.alloc.bufAt(idx)
-	copy(p.buffers, p.buffers[1:])
-	p.buffers = p.buffers[:len(p.buffers)-1]
-	return &Buffer{B: buf, poolIndex: idx}
 }
 
 // Put buffer into the pool. Note that if caller won't put used buffer's into the pool
 // Get operation will block indefinitely.
 func (p *Pool) Put(b *Buffer) {
-	p.cond.L.Lock()
-	defer p.cond.L.Unlock()
-	if p.buffers == nil {
-		return
-	}
-	empty := len(p.buffers) == 0
-	p.buffers = append(p.buffers, b.poolIndex)
-	if empty {
-		p.cond.Signal()
+	next := &node{index: b.poolIndex}
+	for {
+		head := (*node)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&p.head))))
+		next.next = head
+		if atomic.CompareAndSwapPointer((*unsafe.Pointer)(unsafe.Pointer(&p.head)), unsafe.Pointer(head), unsafe.Pointer(next)) {
+			bufferPool.Put(b)
+			return
+		}
+		runtime.Gosched()
 	}
 }
 
 // Close prefents future Get's from the pool and munmap's allocated memory.
+// Caller must ensure that all users of the pool exited before calling Close.
+// Otherwise program will crash referencing to an invalid memory region.
 func (p *Pool) Close() error {
-	p.cond.L.Lock()
-	defer p.cond.L.Unlock()
-	p.cond.Broadcast()
-	p.buffers = nil
 	return p.alloc.close()
+}
+
+type node struct {
+	next  *node
+	index int
 }
