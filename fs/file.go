@@ -4,6 +4,7 @@ import (
 	"os"
 	"sync"
 	"syscall"
+	"unsafe"
 
 	"github.com/dshulyak/uring"
 	"github.com/dshulyak/uring/fixed"
@@ -20,6 +21,7 @@ func ioRst(cqe uring.CQEntry, err error) (int, error) {
 	return int(cqe.Result()), nil
 }
 
+// File ...
 type File struct {
 	f    *os.File // keep the reference to os.File, otherwise fd will be garbage collected
 	mu   sync.Mutex
@@ -36,14 +38,17 @@ type File struct {
 	fixedFiles *fixedFiles
 }
 
+// Name ...
 func (f *File) Name() string {
 	return f.name
 }
 
+// Fd ...
 func (f *File) Fd() uintptr {
 	return f.fd
 }
 
+// Close ...
 func (f *File) Close() error {
 	if f.fixedFiles != nil {
 		_ = f.fixedFiles.unregister(f.ufd)
@@ -60,7 +65,32 @@ func (f *File) Close() error {
 	return nil
 }
 
-func (f *File) WriteAt(b *fixed.Buffer, off int64) (int, error) {
+// WriteAt ...
+func (f *File) WriteAt(buf []byte, off int64) (int, error) {
+	if len(buf) == 0 {
+		return 0, nil
+	}
+	iovec := []syscall.Iovec{{Base: &buf[0], Len: uint64(len(buf))}}
+	return ioRst(f.queue.Syscall(uintptr(unsafe.Pointer(&iovec[0])), func(sqe *uring.SQEntry) {
+		uring.Writev(sqe, f.ufd, iovec, uint64(off), 0)
+		sqe.SetFlags(f.flags)
+	}))
+}
+
+// ReadAt ...
+func (f *File) ReadAt(buf []byte, off int64) (int, error) {
+	if len(buf) == 0 {
+		return 0, nil
+	}
+	iovec := []syscall.Iovec{{Base: &buf[0], Len: uint64(len(buf))}}
+	return ioRst(f.queue.Syscall(uintptr(unsafe.Pointer(&iovec[0])), func(sqe *uring.SQEntry) {
+		uring.Readv(sqe, f.ufd, iovec, uint64(off), 0)
+		sqe.SetFlags(f.flags)
+	}))
+}
+
+// WriteAtFixed ...
+func (f *File) WriteAtFixed(b *fixed.Buffer, off int64) (int, error) {
 	if b.Len() == 0 {
 		return 0, nil
 	}
@@ -70,7 +100,8 @@ func (f *File) WriteAt(b *fixed.Buffer, off int64) (int, error) {
 	}))
 }
 
-func (f *File) ReadAt(b *fixed.Buffer, off int64) (int, error) {
+// ReadAtFixed ...
+func (f *File) ReadAtFixed(b *fixed.Buffer, off int64) (int, error) {
 	if b.Len() == 0 {
 		return 0, nil
 	}
@@ -81,6 +112,7 @@ func (f *File) ReadAt(b *fixed.Buffer, off int64) (int, error) {
 
 }
 
+// Sync ...
 func (f *File) Sync() error {
 	cqe, err := f.queue.Complete(func(sqe *uring.SQEntry) {
 		uring.Fsync(sqe, f.fd)
@@ -94,6 +126,7 @@ func (f *File) Sync() error {
 	return nil
 }
 
+// Datasync ...
 func (f *File) Datasync() error {
 	cqe, err := f.queue.Complete(func(sqe *uring.SQEntry) {
 		uring.Fdatasync(sqe, f.fd)

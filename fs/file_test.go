@@ -1,6 +1,7 @@
 package fs
 
 import (
+	"encoding/binary"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -29,20 +30,20 @@ func TestReadAtWriteAt(t *testing.T) {
 
 	in, out := pool.Get(), pool.Get()
 	copy(out.Bytes(), []byte("ping"))
-	_, err = f.WriteAt(out, 0)
+	_, err = f.WriteAtFixed(out, 0)
 	require.NoError(t, err)
 
-	n, err := f.ReadAt(in, 0)
+	n, err := f.ReadAtFixed(in, 0)
 	require.NoError(t, err)
 	require.Equal(t, int(out.Len()), n)
 	require.Equal(t, out.Bytes(), in.Bytes())
 
 	copy(out.Bytes(), []byte("pong"))
-	n, err = f.WriteAt(out, 0)
+	n, err = f.WriteAtFixed(out, 0)
 	require.NoError(t, err)
 	require.Equal(t, int(out.Len()), n)
 
-	n, err = f.ReadAt(in, 0)
+	n, err = f.ReadAtFixed(in, 0)
 	require.NoError(t, err)
 	require.Equal(t, int(out.Len()), n)
 	require.Equal(t, string(out.Bytes()), string(in.Bytes()))
@@ -86,7 +87,7 @@ func BenchmarkWriteAt(b *testing.B) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < n; i++ {
-				_, err := f.WriteAt(buf, atomic.AddInt64(&offset, size)-size)
+				_, err := f.WriteAtFixed(buf, atomic.AddInt64(&offset, size)-size)
 				if err != nil {
 					b.Error(err)
 				}
@@ -119,7 +120,7 @@ func BenchmarkReadAt(b *testing.B) {
 
 	buf := pool.Get()
 	for i := 0; i < b.N; i++ {
-		_, err := f.WriteAt(buf, int64(i)*size)
+		_, err := f.WriteAtFixed(buf, int64(i)*size)
 		require.NoError(b, err)
 	}
 
@@ -140,7 +141,7 @@ func BenchmarkReadAt(b *testing.B) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < n; i++ {
-				_, err := f.ReadAt(buf, atomic.AddInt64(&offset, size)-size)
+				_, err := f.ReadAtFixed(buf, atomic.AddInt64(&offset, size)-size)
 				if err != nil {
 					b.Error(err)
 				}
@@ -159,15 +160,42 @@ func TestEmptyWrite(t *testing.T) {
 
 	f, err := TempFile(fsm, "", "testing-fs-file-")
 	require.NoError(t, err)
-	defer os.Remove(f.Name())
 
-	pool, err := fixed.New(queue, 10, 1)
-	require.NoError(t, err)
-	defer pool.Close()
-	buf := pool.Get()
-	buf.B = buf.B[:0]
-
-	n, err := f.WriteAt(buf, 0)
+	n, err := f.WriteAt(nil, 0)
 	require.Equal(t, 0, n)
 	require.NoError(t, err)
+}
+
+func TestConcurrentWritesIntegrity(t *testing.T) {
+	queue, err := queue.SetupSharded(8, 1024, nil)
+	require.NoError(t, err)
+	defer queue.Close()
+
+	fsm := NewFilesystem(queue)
+
+	f, err := TempFile(fsm, "", "test-concurrent-writes-")
+	require.NoError(t, err)
+	defer os.Remove(f.Name())
+
+	var wg sync.WaitGroup
+	var n int64 = 10000
+
+	for i := int64(0); i < n; i++ {
+		wg.Add(1)
+		go func(i uint64) {
+			buf := make([]byte, 8)
+			binary.BigEndian.PutUint64(buf, i)
+			_, _ = f.WriteAt(buf, int64(i*8))
+			wg.Done()
+		}(uint64(i))
+	}
+	wg.Wait()
+
+	buf2 := make([]byte, 8)
+	for i := int64(0); i < n; i++ {
+		_, err := f.ReadAt(buf2, i*8)
+		require.NoError(t, err)
+		rst := binary.BigEndian.Uint64(buf2[:])
+		require.Equal(t, i, int64(rst))
+	}
 }

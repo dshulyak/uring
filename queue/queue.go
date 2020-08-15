@@ -222,6 +222,19 @@ func (q *Queue) Ring() *uring.Ring {
 	return q.ring
 }
 
+//go:uintptrescapes
+
+// Syscall ...
+func (q *Queue) Syscall(addr uintptr, opts func(*uring.SQEntry)) (uring.CQEntry, error) {
+	sqe, err := q.prepare()
+	if err != nil {
+		return uring.CQEntry{}, err
+	}
+	opts(sqe)
+	sqe.SetAddr(uint64(addr))
+	return q.complete(sqe)
+}
+
 // Complete blocks until an available submission exists, submits and blocks until completed.
 // Goroutine that executes Complete will be parked.
 func (q *Queue) Complete(f func(*uring.SQEntry)) (uring.CQEntry, error) {

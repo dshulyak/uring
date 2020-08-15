@@ -100,6 +100,7 @@ func (q *ShardedQueue) completionLoop() {
 	}
 }
 
+// getQueue returns queue for current thread.
 func (q *ShardedQueue) getQueue() *Queue {
 	if len(q.shards) == 1 {
 		return q.byEventfd[q.shards[0]]
@@ -107,6 +108,13 @@ func (q *ShardedQueue) getQueue() *Queue {
 	tid := syscall.Gettid()
 	shard := tid % len(q.shards)
 	return q.byEventfd[q.shards[shard]]
+}
+
+//go:uintptrescapes
+
+// Syscall ...
+func (q *ShardedQueue) Syscall(addr uintptr, opts func(*uring.SQEntry)) (uring.CQEntry, error) {
+	return q.getQueue().Syscall(addr, opts)
 }
 
 // Complete waits for completion of the sqe with one of the shards.
