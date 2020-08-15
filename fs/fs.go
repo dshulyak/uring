@@ -9,11 +9,20 @@ import (
 
 const _AT_FDCWD int32 = -0x64
 
-func NewFilesystem(queue *queue.ShardedQueue) *Filesystem {
-	return &Filesystem{
-		queue:      queue,
-		fixedFiles: newFixedFiles(queue, 32),
+type FilesystemOption func(*Filesystem)
+
+func RegisterFiles(n int) FilesystemOption {
+	return func(fsm *Filesystem) {
+		fsm.fixedFiles = newFixedFiles(fsm.queue, n)
 	}
+}
+
+func NewFilesystem(queue *queue.ShardedQueue, opts ...FilesystemOption) *Filesystem {
+	fsm := &Filesystem{queue: queue}
+	for _, opt := range opts {
+		opt(fsm)
+	}
+	return fsm
 }
 
 // Filesystem is a facade for all fs-related functionality.
@@ -23,24 +32,28 @@ type Filesystem struct {
 	fixedFiles *fixedFiles
 }
 
-func (fs *Filesystem) Open(name string, flags int, mode os.FileMode) (*File, error) {
+func (fsm *Filesystem) Open(name string, flags int, mode os.FileMode) (*File, error) {
 	f, err := os.OpenFile(name, flags, mode)
 	if err != nil {
 		return nil, err
 	}
 
-	idx, err := fs.fixedFiles.register(f.Fd())
-	if err != nil {
-		f.Close()
-		return nil, err
-	}
-	return &File{
+	uf := &File{
 		f:          f,
 		fd:         f.Fd(),
-		queue:      fs.queue,
+		ufd:        f.Fd(),
 		name:       name,
-		ufd:        idx,
-		flags:      uring.IOSQE_FIXED_FILE,
-		fixedFiles: fs.fixedFiles,
-	}, nil
+		queue:      fsm.queue,
+		fixedFiles: fsm.fixedFiles,
+	}
+	if fsm.fixedFiles != nil {
+		idx, err := fsm.fixedFiles.register(f.Fd())
+		if err != nil {
+			f.Close()
+			return nil, err
+		}
+		uf.ufd = idx
+		uf.flags = uring.IOSQE_FIXED_FILE
+	}
+	return uf, nil
 }
