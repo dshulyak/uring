@@ -184,6 +184,24 @@ func TestRegisterProbe(t *testing.T) {
 	require.True(t, probe.IsSupported(IORING_OP_NOP))
 }
 
+func TestRegisterUpdateFiles(t *testing.T) {
+	ring, err := Setup(4, nil)
+	require.NoError(t, err)
+	defer ring.Close()
+
+	f1, err := ioutil.TempFile("", "testing-reg-update-")
+	require.NoError(t, err)
+	defer os.Remove(f1.Name())
+	f2, err := ioutil.TempFile("", "testing-reg-update-")
+	require.NoError(t, err)
+	defer os.Remove(f1.Name())
+
+	fds := []int32{int32(f1.Fd()), -1}
+	require.NoError(t, ring.RegisterFiles(fds))
+	fds[1] = int32(f2.Fd())
+	require.NoError(t, ring.UpdateFiles(fds, 0))
+}
+
 func TestReuseSQEntries(t *testing.T) {
 	ring, err := Setup(2, nil)
 	require.NoError(t, err)

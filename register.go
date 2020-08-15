@@ -60,7 +60,7 @@ func (r *Ring) RegisterProbe(probe *Probe) error {
 		uintptr(unsafe.Pointer(probe)),
 		probeOpsSize, 0, 0)
 	if errno > 0 {
-		return error(errno)
+		return errno
 	}
 	return nil
 }
@@ -73,7 +73,7 @@ func (r *Ring) RegisterFiles(fds []int32) error {
 		uintptr(unsafe.Pointer(&fds[0])),
 		uintptr(len(fds)), 0, 0)
 	if errno > 0 {
-		return error(errno)
+		return errno
 	}
 	return nil
 }
@@ -85,7 +85,24 @@ func (r *Ring) UnregisterFiles() error {
 		IORING_UNREGISTER_FILES,
 		0)
 	if errno > 0 {
-		return error(errno)
+		return errno
+	}
+	return nil
+}
+
+func (r *Ring) UpdateFiles(fds []int32, off uint32) error {
+	update := IOUringFilesUpdate{
+		Offset: off,
+		Fds:    &fds[0],
+	}
+	_, _, errno := syscall.Syscall6(
+		IO_URING_REGISTER,
+		uintptr(r.fd),
+		IORING_REGISTER_FILES_UPDATE,
+		uintptr(unsafe.Pointer(&update)),
+		uintptr(len(fds)), 0, 0)
+	if errno > 0 {
+		return errno
 	}
 	return nil
 }
@@ -98,7 +115,7 @@ func (r *Ring) RegisterBuffers(ptr unsafe.Pointer, len uint64) error {
 		uintptr(ptr),
 		uintptr(len), 0, 0)
 	if errno > 0 {
-		return error(errno)
+		return errno
 	}
 	return nil
 }
@@ -110,7 +127,7 @@ func (r *Ring) UnregisterBuffers() error {
 		IORING_UNREGISTER_BUFFERS,
 		0)
 	if errno > 0 {
-		return error(errno)
+		return errno
 	}
 	return nil
 }
@@ -119,14 +136,14 @@ func (r *Ring) SetupEventfd() error {
 	if r.eventfd == 0 {
 		r0, _, errno := syscall.Syscall(syscall.SYS_EVENTFD2, 0, 0, 0)
 		if errno > 0 {
-			return error(errno)
+			return errno
 		}
 		r.eventfd = r0
 	}
 	_, _, errno := syscall.Syscall6(IO_URING_REGISTER, uintptr(r.fd), IORING_REGISTER_EVENTFD, uintptr(unsafe.Pointer(&r.eventfd)), 1, 0, 0)
 	if errno > 0 {
 		_ = r.CloseEventfd()
-		return error(errno)
+		return errno
 	}
 	return nil
 }
@@ -141,7 +158,7 @@ func (r *Ring) CloseEventfd() error {
 	}
 	r.eventfd = 0
 	if errno > 0 {
-		return error(errno)
+		return errno
 	}
 	return nil
 }

@@ -319,3 +319,9 @@ func (e CQEntry) UserData() uint64 {
 type Sigset_t struct {
 	Val [16]uint64
 }
+
+type IOUringFilesUpdate struct {
+	Offset uint32
+	resv   uint32
+	Fds    *int32
+}
