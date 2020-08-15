@@ -113,8 +113,8 @@ func (q *ShardedQueue) getQueue() *Queue {
 //go:uintptrescapes
 
 // Syscall ...
-func (q *ShardedQueue) Syscall(addr uintptr, opts func(*uring.SQEntry)) (uring.CQEntry, error) {
-	return q.getQueue().Syscall(addr, opts)
+func (q *ShardedQueue) Syscall(opts func(*uring.SQEntry), ptrs ...uintptr) (uring.CQEntry, error) {
+	return q.getQueue().Syscall(opts, ptrs...)
 }
 
 // Complete waits for completion of the sqe with one of the shards.

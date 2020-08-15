@@ -225,13 +225,12 @@ func (q *Queue) Ring() *uring.Ring {
 //go:uintptrescapes
 
 // Syscall ...
-func (q *Queue) Syscall(addr uintptr, opts func(*uring.SQEntry)) (uring.CQEntry, error) {
+func (q *Queue) Syscall(opts func(*uring.SQEntry), ptrs ...uintptr) (uring.CQEntry, error) {
 	sqe, err := q.prepare()
 	if err != nil {
 		return uring.CQEntry{}, err
 	}
 	opts(sqe)
-	sqe.SetAddr(uint64(addr))
 	return q.complete(sqe)
 }
 

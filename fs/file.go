@@ -1,7 +1,6 @@
 package fs
 
 import (
-	"os"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -23,7 +22,6 @@ func ioRst(cqe uring.CQEntry, err error) (int, error) {
 
 // File ...
 type File struct {
-	f    *os.File // keep the reference to os.File, otherwise fd will be garbage collected
 	mu   sync.Mutex
 	fd   uintptr
 	name string
@@ -71,10 +69,10 @@ func (f *File) WriteAt(buf []byte, off int64) (int, error) {
 		return 0, nil
 	}
 	iovec := []syscall.Iovec{{Base: &buf[0], Len: uint64(len(buf))}}
-	return ioRst(f.queue.Syscall(uintptr(unsafe.Pointer(&iovec[0])), func(sqe *uring.SQEntry) {
+	return ioRst(f.queue.Syscall(func(sqe *uring.SQEntry) {
 		uring.Writev(sqe, f.ufd, iovec, uint64(off), 0)
 		sqe.SetFlags(f.flags)
-	}))
+	}, uintptr(unsafe.Pointer(&iovec[0]))))
 }
 
 // ReadAt ...
@@ -83,10 +81,10 @@ func (f *File) ReadAt(buf []byte, off int64) (int, error) {
 		return 0, nil
 	}
 	iovec := []syscall.Iovec{{Base: &buf[0], Len: uint64(len(buf))}}
-	return ioRst(f.queue.Syscall(uintptr(unsafe.Pointer(&iovec[0])), func(sqe *uring.SQEntry) {
+	return ioRst(f.queue.Syscall(func(sqe *uring.SQEntry) {
 		uring.Readv(sqe, f.ufd, iovec, uint64(off), 0)
 		sqe.SetFlags(f.flags)
-	}))
+	}, uintptr(unsafe.Pointer(&iovec[0]))))
 }
 
 // WriteAtFixed ...

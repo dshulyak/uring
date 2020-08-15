@@ -178,7 +178,7 @@ func TestConcurrentWritesIntegrity(t *testing.T) {
 	defer os.Remove(f.Name())
 
 	var wg sync.WaitGroup
-	var n int64 = 10000
+	var n int64 = 30000
 
 	for i := int64(0); i < n; i++ {
 		wg.Add(1)
