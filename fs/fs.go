@@ -2,8 +2,8 @@ package fs
 
 import (
 	"os"
-	"sync"
 
+	"github.com/dshulyak/uring"
 	"github.com/dshulyak/uring/queue"
 )
 
@@ -11,7 +11,8 @@ const _AT_FDCWD int32 = -0x64
 
 func NewFilesystem(queue *queue.ShardedQueue) *Filesystem {
 	return &Filesystem{
-		queue: queue,
+		queue:      queue,
+		fixedFiles: newFixedFiles(queue, 32),
 	}
 }
 
@@ -19,8 +20,7 @@ func NewFilesystem(queue *queue.ShardedQueue) *Filesystem {
 type Filesystem struct {
 	queue *queue.ShardedQueue
 
-	mu  sync.Mutex
-	fds []int32
+	fixedFiles *fixedFiles
 }
 
 func (fs *Filesystem) Open(name string, flags int, mode os.FileMode) (*File, error) {
@@ -28,20 +28,19 @@ func (fs *Filesystem) Open(name string, flags int, mode os.FileMode) (*File, err
 	if err != nil {
 		return nil, err
 	}
-	fs.mu.Lock()
-	defer fs.mu.Unlock()
-	// using FILES_UPDATE operation
-	// on close set fd to -1 and replace it with newly opened file
-	fs.fds = append(fs.fds, int32(f.Fd()))
-	if err := fs.queue.RegisterFiles(fs.fds); err != nil {
+
+	idx, err := fs.fixedFiles.register(f.Fd())
+	if err != nil {
 		f.Close()
 		return nil, err
 	}
 	return &File{
-		f:      f,
-		fd:     f.Fd(),
-		queue:  fs.queue,
-		name:   name,
-		regIdx: uintptr(len(fs.fds) - 1),
+		f:          f,
+		fd:         f.Fd(),
+		queue:      fs.queue,
+		name:       name,
+		ufd:        idx,
+		flags:      uring.IOSQE_FIXED_FILE,
+		fixedFiles: fs.fixedFiles,
 	}, nil
 }

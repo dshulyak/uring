@@ -105,6 +105,7 @@ func (r *Ring) UpdateFiles(fds []int32, off uint32) error {
 		return errno
 	}
 	return nil
+
 }
 
 func (r *Ring) RegisterBuffers(ptr unsafe.Pointer, len uint64) error {

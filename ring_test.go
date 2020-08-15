@@ -187,7 +187,9 @@ func TestRegisterProbe(t *testing.T) {
 func TestRegisterUpdateFiles(t *testing.T) {
 	ring, err := Setup(4, nil)
 	require.NoError(t, err)
-	defer ring.Close()
+	t.Cleanup(func() {
+		ring.Close()
+	})
 
 	f1, err := ioutil.TempFile("", "testing-reg-update-")
 	require.NoError(t, err)
@@ -196,10 +198,13 @@ func TestRegisterUpdateFiles(t *testing.T) {
 	require.NoError(t, err)
 	defer os.Remove(f1.Name())
 
-	fds := []int32{int32(f1.Fd()), -1}
-	require.NoError(t, ring.RegisterFiles(fds))
-	fds[1] = int32(f2.Fd())
-	require.NoError(t, ring.UpdateFiles(fds, 0))
+	for r := 0; r < 10; r++ {
+		fds := []int32{int32(f1.Fd()), -1}
+		require.NoError(t, ring.RegisterFiles(fds))
+		fds[1] = int32(f2.Fd())
+		require.NoError(t, ring.UpdateFiles(fds, 0))
+		require.NoError(t, ring.UnregisterFiles())
+	}
 }
 
 func TestReuseSQEntries(t *testing.T) {

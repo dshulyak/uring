@@ -1,7 +1,6 @@
 package fs
 
 import (
-	"io"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -49,32 +48,6 @@ func TestReadAtWriteAt(t *testing.T) {
 	require.Equal(t, string(out.Bytes()), string(in.Bytes()))
 
 	require.NoError(t, f.Close())
-}
-
-func TestReadWrite(t *testing.T) {
-	queue, err := queue.SetupSharded(1, 1024, nil)
-	require.NoError(t, err)
-	defer queue.Close()
-
-	fsm := NewFilesystem(queue)
-
-	f, err := TempFile(fsm, "", "testing-fs-file-")
-	require.NoError(t, err)
-	defer os.Remove(f.Name())
-
-	pool, err := fixed.New(queue, 5, 2)
-	require.NoError(t, err)
-	in1, out := pool.Get(), pool.Get()
-
-	copy(in1.Bytes(), []byte("ping1"))
-	n, err := f.Write(in1.Bytes())
-	require.NoError(t, err)
-	require.Equal(t, 5, n)
-	require.Equal(t, 5, n)
-
-	_, err = f.Read(out.Bytes())
-	require.NoError(t, err)
-	require.Equal(t, in1.Bytes(), out.Bytes())
 }
 
 func BenchmarkWriteAt(b *testing.B) {
@@ -197,22 +170,4 @@ func TestEmptyWrite(t *testing.T) {
 	n, err := f.WriteAt(buf, 0)
 	require.Equal(t, 0, n)
 	require.NoError(t, err)
-}
-
-func TestEOF(t *testing.T) {
-	queue, err := queue.SetupSharded(8, 1024, nil)
-	require.NoError(t, err)
-	defer queue.Close()
-
-	fsm := NewFilesystem(queue)
-
-	f, err := TempFile(fsm, "", "testing-fs-file-")
-	require.NoError(t, err)
-	defer os.Remove(f.Name())
-
-	_, err = f.Write([]byte{1})
-	require.NoError(t, err)
-	n, err := f.Read(make([]byte, 2))
-	require.Equal(t, 1, n)
-	require.Equal(t, io.EOF, err)
 }

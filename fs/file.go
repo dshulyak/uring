@@ -1,7 +1,6 @@
 package fs
 
 import (
-	"io"
 	"os"
 	"sync"
 	"syscall"
@@ -22,13 +21,19 @@ func ioRst(cqe uring.CQEntry, err error) (int, error) {
 }
 
 type File struct {
-	f      *os.File // keep the reference to os.File, otherwise fd will be garbage collected
-	mu     sync.Mutex
-	fd     uintptr
-	name   string
-	regIdx uintptr
+	f    *os.File // keep the reference to os.File, otherwise fd will be garbage collected
+	mu   sync.Mutex
+	fd   uintptr
+	name string
+	// ufd is used for uring operations.
+	// will be equal to fd is fd is not registered, otherwise will be an index in the array
+	// with all registered fds
+	ufd uintptr
+	// additional sqe flags
+	flags uint8
 
-	queue *queue.ShardedQueue
+	queue      *queue.ShardedQueue
+	fixedFiles *fixedFiles
 }
 
 func (f *File) Name() string {
@@ -40,6 +45,9 @@ func (f *File) Fd() uintptr {
 }
 
 func (f *File) Close() error {
+	if f.fixedFiles != nil {
+		_ = f.fixedFiles.unregister(f.ufd)
+	}
 	cqe, err := f.queue.Complete(func(sqe *uring.SQEntry) {
 		uring.Close(sqe, f.fd)
 	})
@@ -52,41 +60,13 @@ func (f *File) Close() error {
 	return nil
 }
 
-func (f *File) Read(b []byte) (n int, err error) {
-	if len(b) == 0 {
-		return
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	n, err = ioRst(f.queue.Complete(func(sqe *uring.SQEntry) {
-		uring.Read(sqe, f.regIdx, b)
-		sqe.SetFlags(uring.IOSQE_FIXED_FILE)
-	}))
-	if n < len(b) && err == nil {
-		return n, io.EOF
-	}
-	return n, err
-}
-
-func (f *File) Write(b []byte) (n int, err error) {
-	if len(b) == 0 {
-		return
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return ioRst(f.queue.Complete(func(sqe *uring.SQEntry) {
-		uring.Write(sqe, f.regIdx, b)
-		sqe.SetFlags(uring.IOSQE_FIXED_FILE)
-	}))
-}
-
 func (f *File) WriteAt(b *fixed.Buffer, off int64) (int, error) {
 	if b.Len() == 0 {
 		return 0, nil
 	}
 	return ioRst(f.queue.Complete(func(sqe *uring.SQEntry) {
-		uring.WriteFixed(sqe, f.regIdx, b.Base(), b.Len(), uint64(off), 0, b.Index())
-		sqe.SetFlags(uring.IOSQE_FIXED_FILE)
+		uring.WriteFixed(sqe, f.ufd, b.Base(), b.Len(), uint64(off), 0, b.Index())
+		sqe.SetFlags(f.flags)
 	}))
 }
 
@@ -95,8 +75,8 @@ func (f *File) ReadAt(b *fixed.Buffer, off int64) (int, error) {
 		return 0, nil
 	}
 	return ioRst(f.queue.Complete(func(sqe *uring.SQEntry) {
-		uring.ReadFixed(sqe, f.regIdx, b.Base(), b.Len(), uint64(off), 0, b.Index())
-		sqe.SetFlags(uring.IOSQE_FIXED_FILE)
+		uring.ReadFixed(sqe, f.ufd, b.Base(), b.Len(), uint64(off), 0, b.Index())
+		sqe.SetFlags(f.flags)
 	}))
 
 }

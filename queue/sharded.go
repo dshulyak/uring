@@ -57,7 +57,7 @@ func NewSharded(queues []*Queue) *ShardedQueue {
 	shards := make([]int32, len(queues))
 	for i, qu := range queues {
 		ring := qu.Ring()
-		for r := 5; r > 0; r-- {
+		for {
 			if err := ring.SetupEventfd(); err != nil {
 				if err == syscall.EINTR {
 					continue
@@ -144,26 +144,51 @@ func (q *ShardedQueue) CompleteAll(f func(*uring.SQEntry), c func(uring.CQEntry)
 // RegisterBuffers will register buffers on all rings (shards). Note that registration
 // is done with syscall, and will have to wait until rings are idle.
 // TODO test if IORING_OP_PROVIDE_BUFFERS is supported (5.7?)
-func (q *ShardedQueue) RegisterBuffers(ptr unsafe.Pointer, len uint64) error {
-	for _, qu := range q.byEventfd {
-		if err := qu.Ring().RegisterBuffers(ptr, len); err != nil {
-			return err
+func (q *ShardedQueue) RegisterBuffers(ptr unsafe.Pointer, len uint64) (err error) {
+	for _, subq := range q.byEventfd {
+		err = subq.Ring().RegisterBuffers(ptr, len)
+		if err != nil {
+			return
 		}
 	}
-	return nil
+	return
 }
 
-func (q *ShardedQueue) RegisterFiles(fds []int32) error {
-	for _, qu := range q.byEventfd {
-		if err := qu.Ring().RegisterFiles(fds); err != nil {
-			return err
+// RegisterFiles ...
+func (q *ShardedQueue) RegisterFiles(fds []int32) (err error) {
+	for _, subq := range q.byEventfd {
+		err = subq.Ring().RegisterFiles(fds)
+		if err != nil {
+			return
 		}
 	}
-	return nil
+	return
+}
+
+// UpdateFiles ...
+func (q *ShardedQueue) UpdateFiles(fds []int32, off uint32) (err error) {
+	for _, subq := range q.byEventfd {
+		err = subq.Ring().UpdateFiles(fds, off)
+		if err != nil {
+			return
+		}
+	}
+	return
+}
+
+// UnregisterFiles ...
+func (q *ShardedQueue) UnregisterFiles() (err error) {
+	for _, subq := range q.byEventfd {
+		err = subq.Ring().UnregisterFiles()
+		if err != nil {
+			return
+		}
+	}
+	return
 }
 
 // UnregisterBuffers ...
-func (q *ShardedQueue) UnregisterBuffers() error {
+func (q *ShardedQueue) UnregisterBuffers() (err error) {
 	for _, qu := range q.byEventfd {
 		if err := qu.Ring().UnregisterBuffers(); err != nil {
 			return err
