@@ -49,8 +49,10 @@ type QueueOption func(q *Queue)
 // WAIT will make completion loop to Enter with minComplete=1.
 // During idle periods completionLoop thread will sleep.
 //
-// NOTE(dshulyak) for some reason operation on registered files with minComplete=1 hangs.
-// this must be sign of a bug somewhere, but quite a strange thing
+// Registering files and buffers requires uring to become idle, with WAIT we are
+// entering the queue and waiting until the next event is completed. Even if queue is
+// empty this makes uring think that it is not idle. As a consequence Registering files
+// or buffers leads to deadlock.
 func WAIT(q *Queue) {
 	q.minComplete = 1
 }
