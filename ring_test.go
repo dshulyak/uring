@@ -331,3 +331,19 @@ func TestReadWriteFixed(t *testing.T) {
 
 	require.Equal(t, in, resp)
 }
+
+func TestIOPoll(t *testing.T) {
+	ring, err := Setup(4, &IOUringParams{Flags: IORING_SETUP_IOPOLL})
+	require.NoError(t, err)
+	defer ring.Close()
+
+	// returns immediatly
+	_, err = ring.GetCQEntry(0)
+	require.Error(t, syscall.EAGAIN, err)
+
+	// returns once consumed scheduler time slice
+	_, err = ring.GetCQEntry(1)
+	require.Error(t, syscall.EAGAIN, err)
+
+	// TODO IOPOLL currently not supported on my devices
+}

@@ -138,10 +138,6 @@ func (r *Ring) GetSQEntry() *SQEntry {
 
 // Flush submission queue.
 func (r *Ring) Flush() uint32 {
-	return r.flushSq()
-}
-
-func (r *Ring) flushSq() uint32 {
 	toSubmit := r.sq.sqeTail - r.sq.sqeHead
 	if toSubmit == 0 {
 		return 0
@@ -172,8 +168,7 @@ func (r *Ring) Enter(submitted uint32, minComplete uint32) (uint32, error) {
 
 // Submit and wait for specified number of entries.
 func (r *Ring) Submit(minComplete uint32) (uint32, error) {
-	submitted := r.flushSq()
-	return r.Enter(submitted, minComplete)
+	return r.Enter(r.Flush(), minComplete)
 }
 
 // GetCQEntry returns entry from completion queue, performing IO_URING_ENTER syscall if necessary.
@@ -181,20 +176,29 @@ func (r *Ring) Submit(minComplete uint32) (uint32, error) {
 // syscall.EAGAIN will be returned if there are no completed entries and minComplete is 0.
 // syscall.EINTR will be returned if IO_URING_ENTER was interrupted while waiting for completion.
 func (r *Ring) GetCQEntry(minComplete uint32) (CQEntry, error) {
+	needs := r.cqNeedsEnter()
+	if needs {
+		if _, err := r.enter(0, minComplete, 0); err != nil {
+			return CQEntry{}, err
+		}
+	}
+	exit := needs
 	for {
 		cqe, found := r.peekCQEntry()
 		if found {
 			return cqe, nil
 		}
-		if r.cqNeedsEnter() || minComplete > 0 {
+		if exit {
+			break
+		}
+		if minComplete > 0 {
 			if _, err := r.enter(0, minComplete, IORING_ENTER_GETEVENTS); err != nil {
 				return CQEntry{}, err
 			}
-			continue
 		}
-		return CQEntry{}, syscall.EAGAIN
+		exit = true
 	}
-	panic("unreachable")
+	return CQEntry{}, syscall.EAGAIN
 }
 
 func (r *Ring) enter(submitted, minComplete, flags uint32) (uint32, error) {
