@@ -225,6 +225,8 @@ func (q *Queue) Ring() *uring.Ring {
 //go:uintptrescapes
 
 // Syscall ...
+// Do not hide this call behind interface.
+// https://github.com/golang/go/issues/16035#issuecomment-231107512.
 func (q *Queue) Syscall(opts func(*uring.SQEntry), ptrs ...uintptr) (uring.CQEntry, error) {
 	sqe, err := q.prepare()
 	if err != nil {
