@@ -15,11 +15,11 @@ var bufferPool = sync.Pool{
 
 // New will initialize mmap'ed memory region, of the total size 16 bytes + size*bufsize
 // and register mmap'ed memory as buffer in io_uring.
-func New(queue Queue, bufsize, size int) (*Pool, error) {
+func New(reg Registry, bufsize, size int) (*Pool, error) {
 	alloc := &allocator{
 		max:        size,
 		bufferSize: bufsize,
-		queue:      queue,
+		reg:        reg,
 	}
 	if err := alloc.init(); err != nil {
 		return nil, err

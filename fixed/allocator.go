@@ -11,8 +11,8 @@ var (
 	ErrOverflow = errors.New("buffer number overflow")
 )
 
-// Queue ...
-type Queue interface {
+// Registry ...
+type Registry interface {
 	RegisterBuffers(unsafe.Pointer, uint64) error
 }
 
@@ -30,7 +30,7 @@ type allocator struct {
 	// buffers - list of buffers of the same size.
 	mem []byte
 
-	queue Queue
+	reg Registry
 }
 
 func (a *allocator) init() error {
@@ -47,7 +47,7 @@ func (a *allocator) init() error {
 	iovec := (*syscall.Iovec)(unsafe.Pointer(&a.mem[0]))
 	iovec.Base = &mem[header]
 	iovec.Len = uint64(size - header)
-	return a.queue.RegisterBuffers(unsafe.Pointer(&a.mem[0]), 1)
+	return a.reg.RegisterBuffers(unsafe.Pointer(&a.mem[0]), 1)
 }
 
 func (a *allocator) close() error {
