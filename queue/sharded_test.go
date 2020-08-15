@@ -3,6 +3,7 @@ package queue
 import (
 	"io/ioutil"
 	"os"
+	"runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -76,7 +77,7 @@ func TestRegisterBuffers(t *testing.T) {
 }
 
 func BenchmarkWriteSharded(b *testing.B) {
-	queue, err := SetupSharded(8, 4096, &uring.IOUringParams{
+	queue, err := SetupSharded(uint(runtime.GOMAXPROCS(0)), 4096, &uring.IOUringParams{
 		CQEntries: 4 * 4096,
 		Flags:     uring.IORING_SETUP_CQSIZE,
 	})

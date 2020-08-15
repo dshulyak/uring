@@ -189,18 +189,13 @@ func (q *Queue) completeAsync(sqe *uring.SQEntry) (*Result, error) {
 	q.nonce++
 
 	q.ring.Flush()
-	// it is safe to unlock before enter,
-	// if there are more sq slots available after this one was flushed.
-	// if there are no slots after submission was flushed - unlock must be made
-	// only after enter
-	slots := q.ring.SQSlotsAvailable()
-	if slots {
-		q.reqCond.L.Unlock()
-	}
+
+	// it is safe to unlock before enter, only if there are more sq slots available after this one was flushed.
+	// if there are no slots then the one of the goroutines will have to wait in the loop until sqe is not nil.
+
+	q.reqCond.L.Unlock()
 	_, err := q.ring.Enter(1, 0)
-	if !slots {
-		q.reqCond.L.Unlock()
-	}
+
 	if err != nil {
 		return nil, err
 	}
