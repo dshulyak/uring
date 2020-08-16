@@ -2,6 +2,7 @@ package fs
 
 import (
 	"encoding/binary"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"sync"
@@ -16,9 +17,9 @@ import (
 )
 
 func TestReadAtWriteAt(t *testing.T) {
-	queue, err := queue.SetupSharded(1, 1024, nil)
+	queue, err := queue.Setup(1024, nil, nil)
 	require.NoError(t, err)
-	defer queue.Close()
+	t.Cleanup(func() { queue.Close() })
 
 	fsm := NewFilesystem(queue)
 
@@ -30,7 +31,7 @@ func TestReadAtWriteAt(t *testing.T) {
 
 	pool, err := fixed.New(queue, 4, 2)
 	require.NoError(t, err)
-	defer pool.Close()
+	t.Cleanup(func() { pool.Close() })
 
 	in, out := pool.Get(), pool.Get()
 	copy(out.Bytes(), []byte("ping"))
@@ -55,17 +56,16 @@ func TestReadAtWriteAt(t *testing.T) {
 	require.NoError(t, f.Close())
 }
 
-func BenchmarkWriteAtOS(b *testing.B) {
+func benchmarkOSWriteAt(b *testing.B, size int64, fflags int) {
 	f, err := ioutil.TempFile("", "testing-write-os-")
 	require.NoError(b, err)
 	require.NoError(b, f.Close())
-	f, err = os.OpenFile(f.Name(), os.O_RDWR|unix.O_DSYNC, 06444)
+	f, err = os.OpenFile(f.Name(), os.O_RDWR|fflags, 0644)
 	require.NoError(b, err)
 	b.Cleanup(func() {
 		os.Remove(f.Name())
 	})
 
-	size := int64(256 << 10)
 	buf := make([]byte, size)
 	offset := int64(0)
 
@@ -83,14 +83,13 @@ func BenchmarkWriteAtOS(b *testing.B) {
 	})
 }
 
-func BenchmarkReadAtOS(b *testing.B) {
+func benchmarkOSReadAt(b *testing.B, size int64) {
 	f, err := ioutil.TempFile("", "testing-write-os-")
 	require.NoError(b, err)
 	b.Cleanup(func() {
 		os.Remove(f.Name())
 	})
 
-	size := int64(256 << 10)
 	buf := make([]byte, size)
 	offset := int64(0)
 
@@ -113,21 +112,147 @@ func BenchmarkReadAtOS(b *testing.B) {
 	})
 }
 
-func BenchmarkWriteAtDsync(b *testing.B) {
-	queue, err := queue.SetupSharded(50, 128, &uring.IOUringParams{
-		CQEntries: 4096,
-		Flags:     uring.IORING_SETUP_CQSIZE,
-	}, queue.OptRoundRobin)
-	require.NoError(b, err)
-	b.Cleanup(func() { queue.Close() })
+func BenchmarkWriteAt(b *testing.B) {
+	for _, size := range []int64{8 << 10, 256 << 10, 1 << 20} {
+		b.Run(fmt.Sprintf("uring sharded rr dsync %d", size), func(b *testing.B) {
+			q, err := queue.Setup(
+				128,
+				&uring.IOUringParams{
+					CQEntries: 4096,
+					Flags:     uring.IORING_SETUP_CQSIZE,
+				},
+				&queue.Params{
+					// in this case 50 is the number of workers used by uring
+					Shards:           50,
+					ShardingStrategy: queue.ShardingRoundRobin,
+					WaitMethod:       queue.WaitEventfd,
+				},
+			)
+			require.NoError(b, err)
+			benchmarkWriteAt(b, q, size, unix.O_DSYNC)
+		})
+		b.Run(fmt.Sprintf("uring sharded default %d", size), func(b *testing.B) {
+			q, err := queue.Setup(
+				128,
+				&uring.IOUringParams{
+					CQEntries: 4096,
+					Flags:     uring.IORING_SETUP_CQSIZE,
+				},
+				nil,
+			)
+			require.NoError(b, err)
+			benchmarkWriteAt(b, q, size, 0)
+		})
+		b.Run(fmt.Sprintf("uring enter %d", size), func(b *testing.B) {
+			q, err := queue.Setup(
+				4096,
+				&uring.IOUringParams{
+					CQEntries: 4 * 4096,
+					Flags:     uring.IORING_SETUP_CQSIZE,
+				},
+				&queue.Params{
+					WaitMethod: queue.WaitEnter,
+				},
+			)
+			require.NoError(b, err)
+			benchmarkWriteAt(b, q, size, 0)
+		})
+		b.Run(fmt.Sprintf("uring poll %d", size), func(b *testing.B) {
+			q, err := queue.Setup(
+				4096,
+				&uring.IOUringParams{
+					CQEntries: 4 * 4096,
+					Flags:     uring.IORING_SETUP_CQSIZE,
+				},
+				&queue.Params{
+					WaitMethod: queue.WaitPoll,
+				},
+			)
+			require.NoError(b, err)
+			benchmarkWriteAt(b, q, size, 0)
+		})
+		b.Run(fmt.Sprintf("os dsync %d", size), func(b *testing.B) {
+			benchmarkOSWriteAt(b, size, unix.O_DSYNC)
+		})
+		b.Run(fmt.Sprintf("os %d", size), func(b *testing.B) {
+			benchmarkOSWriteAt(b, size, 0)
+		})
+	}
+}
 
-	fsm := NewFilesystem(queue)
+func BenchmarkReadAt(b *testing.B) {
+	for _, size := range []int64{8 << 10, 256 << 10, 1 << 20} {
+		b.Run(fmt.Sprintf("uring sharded rr %d", size), func(b *testing.B) {
+			q, err := queue.Setup(
+				128,
+				&uring.IOUringParams{
+					CQEntries: 4096,
+					Flags:     uring.IORING_SETUP_CQSIZE,
+				},
+				&queue.Params{
+					// in this case 50 is the number of workers created by uring
+					Shards:           50,
+					ShardingStrategy: queue.ShardingRoundRobin,
+					WaitMethod:       queue.WaitEventfd,
+				},
+			)
+			require.NoError(b, err)
+			benchmarkReadAt(b, q, size)
+		})
+		b.Run(fmt.Sprintf("uring sharded default %d", size), func(b *testing.B) {
+			q, err := queue.Setup(
+				128,
+				&uring.IOUringParams{
+					CQEntries: 4096,
+					Flags:     uring.IORING_SETUP_CQSIZE,
+				},
+				nil,
+			)
+			require.NoError(b, err)
+			benchmarkReadAt(b, q, size)
+		})
+		b.Run(fmt.Sprintf("uring enter %d", size), func(b *testing.B) {
+			q, err := queue.Setup(
+				4096,
+				&uring.IOUringParams{
+					CQEntries: 4 * 4096,
+					Flags:     uring.IORING_SETUP_CQSIZE,
+				},
+				&queue.Params{
+					WaitMethod: queue.WaitEnter,
+				},
+			)
+			require.NoError(b, err)
+			benchmarkReadAt(b, q, size)
+		})
+		b.Run(fmt.Sprintf("uring poll %d", size), func(b *testing.B) {
+			q, err := queue.Setup(
+				4096,
+				&uring.IOUringParams{
+					CQEntries: 4 * 4096,
+					Flags:     uring.IORING_SETUP_CQSIZE,
+				},
+				&queue.Params{
+					WaitMethod: queue.WaitPoll,
+				},
+			)
+			require.NoError(b, err)
+			benchmarkReadAt(b, q, size)
+		})
+		b.Run(fmt.Sprintf("os %d", size), func(b *testing.B) {
+			benchmarkOSReadAt(b, size)
+		})
+	}
+}
 
-	f, err := TempFile(fsm, "testing-fs-file-", unix.O_DSYNC)
+func benchmarkWriteAt(b *testing.B, q *queue.Queue, size int64, fflags int) {
+	b.Cleanup(func() { q.Close() })
+	fsm := NewFilesystem(q)
+
+	f, err := TempFile(fsm, "testing-fs-file-", fflags)
 	require.NoError(b, err)
 	b.Cleanup(func() { os.Remove(f.Name()) })
 
-	size := int64(256 << 10)
 	offset := int64(0)
 	buf := make([]byte, size)
 
@@ -150,15 +275,12 @@ func BenchmarkWriteAtDsync(b *testing.B) {
 	wg.Wait()
 }
 
-func BenchmarkReadAt(b *testing.B) {
-	queue, err := queue.SetupSharded(8, 1024, &uring.IOUringParams{
-		CQEntries: 8 * 1024,
-		Flags:     uring.IORING_SETUP_CQSIZE,
+func benchmarkReadAt(b *testing.B, q *queue.Queue, size int64) {
+	b.Cleanup(func() {
+		q.Close()
 	})
-	require.NoError(b, err)
-	defer queue.Close()
 
-	fsm := NewFilesystem(queue)
+	fsm := NewFilesystem(q)
 
 	f, err := TempFile(fsm, "testing-fs-file-", 0)
 	require.NoError(b, err)
@@ -166,7 +288,6 @@ func BenchmarkReadAt(b *testing.B) {
 		os.Remove(f.Name())
 	})
 
-	size := int64(256 << 10)
 	offset := int64(0)
 	buf := make([]byte, size)
 	for i := 0; i < b.N; i++ {
@@ -198,9 +319,9 @@ func BenchmarkReadAt(b *testing.B) {
 }
 
 func TestEmptyWrite(t *testing.T) {
-	queue, err := queue.SetupSharded(8, 1024, nil)
+	queue, err := queue.Setup(1024, nil, nil)
 	require.NoError(t, err)
-	defer queue.Close()
+	t.Cleanup(func() { queue.Close() })
 
 	fsm := NewFilesystem(queue)
 
@@ -216,9 +337,9 @@ func TestEmptyWrite(t *testing.T) {
 }
 
 func TestConcurrentWritesIntegrity(t *testing.T) {
-	queue, err := queue.SetupSharded(8, 1024, nil)
+	queue, err := queue.Setup(1024, nil, nil)
 	require.NoError(t, err)
-	defer queue.Close()
+	t.Cleanup(func() { queue.Close() })
 
 	fsm := NewFilesystem(queue)
 

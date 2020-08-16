@@ -1,6 +1,8 @@
 package queue
 
 import (
+	"errors"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -10,85 +12,112 @@ import (
 )
 
 const (
-	shardedSharedWQ uint64 = 1 << iota
-	shardedThreadID
-	shardedRoundRobin
+	// ShardingThreadID shares work based on thread id.
+	ShardingThreadID uint = iota
+	// ShardingRoundRobin shares shares work in round robin.
+	ShardingRoundRobin
 )
 
-func defaultShardedOpts() []OptShardedQueue {
-	return []OptShardedQueue{OptSharedWorkers, OptThreadID}
+const (
+	// WaitPoll monitors completion queue by polling (or IO_URING_ENTER with minComplete=0 in case of IOPOLL)
+	WaitPoll uint = iota
+	// WaitEnter monitors completion queue by waiting on IO_URING_ENTER with minComplete=1
+	// Registering files and buffers requires uring to become idle, with WaitEnter we are
+	// blocking until the next event is completed. Even if queue is empty this
+	// makes uring think that it is not idle. As a consequence Registering files
+	// or buffers leads to deadlock.
+	WaitEnter
+	// WaitEventfd wathches eventfd of each queue in the shard.
+	WaitEventfd
+)
+
+const (
+	// FlagSharedWorkers shares worker pool from the first ring instance between all shards in the queue.
+	FlagSharedWorkers = 1 << iota
+)
+
+func defaultParams() *Params {
+	return &Params{
+		Shards:           uint(runtime.GOMAXPROCS(0)),
+		ShardingStrategy: ShardingThreadID,
+		WaitMethod:       WaitEventfd,
+		Flags:            FlagSharedWorkers,
+	}
 }
 
-// OptShardedQueue ...
-type OptShardedQueue func(*ShardedQueue)
-
-// OptSharedWorkers will make all shards to reuse workers from the first pool.
-func OptSharedWorkers(q *ShardedQueue) {
-	q.flags |= shardedSharedWQ
+// Params ...
+type Params struct {
+	Shards           uint
+	ShardingStrategy uint
+	WaitMethod       uint
+	Flags            uint
 }
 
-// OptThreadID will assign a queue based on goroutine thread ID.
-// Mutually exclusive with OptRoundRobin.
-func OptThreadID(q *ShardedQueue) {
-	q.flags |= shardedThreadID
-}
-
-// OptRoundRobin will assign a queue in round robin.
-// Mutually exclusive with OptThreadID.
-func OptRoundRobin(q *ShardedQueue) {
-	q.flags |= shardedRoundRobin
-}
-
-// ShardedQueue distributes submissions over several shards, each shard running
-// on its own ring. Completions are reaped using epoll on eventfd of the every ring.
-// Benchmarks are inconclusive, with higher throughpout Sharded is somewhat faster than the
-// regualr Queue, but with submissions that spend more time in kernel - regualr Queue
-// can be as twice as fast as this one.
-type ShardedQueue struct {
-	flags uint64
-
+// Queue ...
+type Queue struct {
+	qparams *Params
+	// fields are relevant only if sharding is enabled.
 	shards    []int32
 	n         uint64
-	byEventfd map[int32]*Queue
+	byEventfd map[int32]*queue
 	poll      *poll
-
 	// order is used only if queue operates in round robin mode
 	order uint64
+
+	// queue should be used if sharding is disabled.
+	queue *queue
 
 	wg sync.WaitGroup
 }
 
-// SetupSharded setups requested number of shards, with shared kernel worker pool.
-func SetupSharded(shards, size uint, params *uring.IOUringParams, opts ...OptShardedQueue) (*ShardedQueue, error) {
-	if len(opts) == 0 {
-		opts = defaultShardedOpts()
+// Setup setups requested number of shards, with shared kernel worker pool.
+func Setup(size uint, params *uring.IOUringParams, qp *Params) (*Queue, error) {
+	if qp == nil {
+		qp = defaultParams()
 	}
+	if qp.Shards > 1 && qp.WaitMethod != WaitEventfd {
+		return nil, errors.New("completions can be reaped only by waiting on eventfd if sharding is enabled")
+	}
+	q := &Queue{qparams: qp}
+	if qp.Shards > 1 {
+		return q, setupSharded(q, size, params)
+	}
+	return q, setupSimple(q, size, params)
+}
+
+func setupSimple(q *Queue, size uint, params *uring.IOUringParams) error {
+	ring, err := uring.Setup(size, params)
+	if err != nil {
+		return err
+	}
+	q.queue = newQueue(ring, q.qparams)
+	q.queue.startCompletionLoop()
+	return nil
+}
+
+func setupSharded(q *Queue, size uint, params *uring.IOUringParams) error {
 	var (
-		q          = &ShardedQueue{}
-		queues     = make([]*Queue, shards)
+		queues     = make([]*queue, q.qparams.Shards)
 		paramsCopy uring.IOUringParams
 	)
-	for _, opt := range opts {
-		opt(q)
-	}
 
 	if params != nil {
 		paramsCopy = *params
 	}
 	for i := range queues {
 		use := paramsCopy
-		if q.flags&shardedSharedWQ > 0 && i > 0 {
+		if q.qparams.Flags&FlagSharedWorkers > 0 && i > 0 {
 			use.Flags |= uring.IORING_SETUP_ATTACH_WQ
 			use.WQFd = uint32(queues[0].Ring().Fd())
 		}
 		ring, err := uring.Setup(size, &use)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		queues[i] = newQueue(ring)
+		queues[i] = newQueue(ring, q.qparams)
 	}
 
-	byEventfd := make(map[int32]*Queue, len(queues))
+	byEventfd := make(map[int32]*queue, len(queues))
 	pl, err := newPoll(len(queues))
 	if err != nil {
 		panic(err)
@@ -112,15 +141,15 @@ func SetupSharded(shards, size uint, params *uring.IOUringParams, opts ...OptSha
 		byEventfd[int32(ring.Eventfd())] = qu
 	}
 	q.shards = shardsList
-	q.n = uint64(shards)
+	q.n = uint64(q.qparams.Shards)
 	q.byEventfd = byEventfd
 	q.poll = pl
 	q.wg.Add(1)
-	go q.completionLoop()
-	return q, nil
+	go q.epollLoop()
+	return nil
 }
 
-func (q *ShardedQueue) completionLoop() {
+func (q *Queue) epollLoop() {
 	defer q.wg.Done()
 	for {
 		exit := false
@@ -139,17 +168,21 @@ func (q *ShardedQueue) completionLoop() {
 }
 
 // getQueue returns queue for current thread.
-func (q *ShardedQueue) getQueue() *Queue {
+func (q *Queue) getQueue() *queue {
+	if q.queue != nil {
+		return q.queue
+	}
+	// TODO get rid of this condition
 	if len(q.shards) == 1 {
 		return q.byEventfd[q.shards[0]]
 	}
 	var tid uint64
-	if q.flags&shardedThreadID > 0 {
+	if q.qparams.ShardingStrategy == ShardingThreadID {
 		tid = uint64(syscall.Gettid())
-	} else if q.flags&shardedRoundRobin > 0 {
+	} else if q.qparams.ShardingStrategy == ShardingRoundRobin {
 		tid = atomic.AddUint64(&q.order, 1)
 	} else {
-		panic("one of OptThreadID or OptRoundRobin must be set")
+		panic("sharded queue must use ShardingThreadID or ShardingRoundRobin")
 	}
 	shard := tid % q.n
 	return q.byEventfd[q.shards[shard]]
@@ -160,22 +193,30 @@ func (q *ShardedQueue) getQueue() *Queue {
 // Syscall ...
 // Do not hide this call behind interface.
 // https://github.com/golang/go/issues/16035#issuecomment-231107512.
-func (q *ShardedQueue) Syscall(opts func(*uring.SQEntry), ptrs ...uintptr) (uring.CQEntry, error) {
+func (q *Queue) Syscall(opts func(*uring.SQEntry), ptrs ...uintptr) (uring.CQEntry, error) {
 	return q.getQueue().Syscall(opts, ptrs...)
 }
 
 // Complete waits for completion of the sqe with one of the shards.
-func (q *ShardedQueue) Complete(f func(*uring.SQEntry)) (uring.CQEntry, error) {
+func (q *Queue) Complete(f func(*uring.SQEntry)) (uring.CQEntry, error) {
 	return q.getQueue().Complete(f)
 }
 
 // CompleteAsync returns future for waiting of the sqe completion with one of the shards.
-func (q *ShardedQueue) CompleteAsync(f func(*uring.SQEntry)) (*Result, error) {
+func (q *Queue) CompleteAsync(f func(*uring.SQEntry)) (*Result, error) {
 	return q.getQueue().CompleteAsync(f)
 }
 
-// CompleteAll completes request on each queue. Usefull for registers and tests.
-func (q *ShardedQueue) CompleteAll(f func(*uring.SQEntry), c func(uring.CQEntry)) error {
+// CompleteAll completes request on each queue. Usefull for async registrations and tests.
+func (q *Queue) CompleteAll(f func(*uring.SQEntry), c func(uring.CQEntry)) error {
+	if q.queue != nil {
+		cqe, err := q.queue.Complete(f)
+		if err != nil {
+			return err
+		}
+		c(cqe)
+		return nil
+	}
 	results := make([]*Result, 0, len(q.byEventfd))
 	for _, qu := range q.byEventfd {
 		result, err := qu.CompleteAsync(f)
@@ -199,7 +240,10 @@ func (q *ShardedQueue) CompleteAll(f func(*uring.SQEntry), c func(uring.CQEntry)
 // RegisterBuffers will register buffers on all rings (shards). Note that registration
 // is done with syscall, and will have to wait until rings are idle.
 // TODO test if IORING_OP_PROVIDE_BUFFERS is supported (5.7?)
-func (q *ShardedQueue) RegisterBuffers(ptr unsafe.Pointer, len uint64) (err error) {
+func (q *Queue) RegisterBuffers(ptr unsafe.Pointer, len uint64) (err error) {
+	if q.queue != nil {
+		return q.queue.Ring().RegisterBuffers(ptr, len)
+	}
 	for _, subq := range q.byEventfd {
 		err = subq.Ring().RegisterBuffers(ptr, len)
 		if err != nil {
@@ -210,7 +254,10 @@ func (q *ShardedQueue) RegisterBuffers(ptr unsafe.Pointer, len uint64) (err erro
 }
 
 // RegisterFiles ...
-func (q *ShardedQueue) RegisterFiles(fds []int32) (err error) {
+func (q *Queue) RegisterFiles(fds []int32) (err error) {
+	if q.queue != nil {
+		return q.queue.Ring().RegisterFiles(fds)
+	}
 	for _, subq := range q.byEventfd {
 		err = subq.Ring().RegisterFiles(fds)
 		if err != nil {
@@ -221,7 +268,10 @@ func (q *ShardedQueue) RegisterFiles(fds []int32) (err error) {
 }
 
 // UpdateFiles ...
-func (q *ShardedQueue) UpdateFiles(fds []int32, off uint32) (err error) {
+func (q *Queue) UpdateFiles(fds []int32, off uint32) (err error) {
+	if q.queue != nil {
+		return q.queue.Ring().UpdateFiles(fds, off)
+	}
 	for _, subq := range q.byEventfd {
 		err = subq.Ring().UpdateFiles(fds, off)
 		if err != nil {
@@ -232,7 +282,10 @@ func (q *ShardedQueue) UpdateFiles(fds []int32, off uint32) (err error) {
 }
 
 // UnregisterFiles ...
-func (q *ShardedQueue) UnregisterFiles() (err error) {
+func (q *Queue) UnregisterFiles() (err error) {
+	if q.queue != nil {
+		return q.queue.Ring().UnregisterFiles()
+	}
 	for _, subq := range q.byEventfd {
 		err = subq.Ring().UnregisterFiles()
 		if err != nil {
@@ -243,7 +296,10 @@ func (q *ShardedQueue) UnregisterFiles() (err error) {
 }
 
 // UnregisterBuffers ...
-func (q *ShardedQueue) UnregisterBuffers() (err error) {
+func (q *Queue) UnregisterBuffers() (err error) {
+	if q.queue != nil {
+		return q.queue.Ring().UnregisterBuffers()
+	}
 	for _, qu := range q.byEventfd {
 		if err := qu.Ring().UnregisterBuffers(); err != nil {
 			return err
@@ -257,7 +313,14 @@ func (q *ShardedQueue) UnregisterBuffers() (err error) {
 // - request close on each queue
 // - once any queue exits - completionLoop will be terminated
 // - once completion loop terminated - unregister eventfd's and close rings
-func (q *ShardedQueue) Close() (err0 error) {
+func (q *Queue) Close() (err0 error) {
+	if q.queue != nil {
+		err0 = q.queue.Close()
+		if err := q.queue.Ring().Close(); err != nil && err0 == nil {
+			err0 = err
+		}
+		return
+	}
 	// FIXME use multierr
 	for _, queue := range q.byEventfd {
 		if err := queue.Close(); err != nil && err0 == nil {

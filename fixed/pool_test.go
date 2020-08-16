@@ -14,7 +14,7 @@ import (
 )
 
 func TestWrite(t *testing.T) {
-	queue, err := queue.SetupSharded(8, 1024, nil)
+	queue, err := queue.Setup(1024, nil, nil)
 	defer queue.Close()
 
 	f, err := ioutil.TempFile("", "test")
@@ -44,7 +44,7 @@ func TestWrite(t *testing.T) {
 }
 
 func TestConcurrentWrites(t *testing.T) {
-	queue, err := queue.SetupSharded(8, 1024, nil)
+	queue, err := queue.Setup(1024, nil, nil)
 	require.NoError(t, err)
 	defer queue.Close()
 
@@ -81,7 +81,7 @@ func TestConcurrentWrites(t *testing.T) {
 }
 
 func BenchmarkPool(b *testing.B) {
-	queue, err := queue.SetupSharded(8, 1024, nil)
+	queue, err := queue.Setup(1024, nil, nil)
 	require.NoError(b, err)
 	defer queue.Close()
 

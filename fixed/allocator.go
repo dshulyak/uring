@@ -4,17 +4,14 @@ import (
 	"errors"
 	"syscall"
 	"unsafe"
+
+	"github.com/dshulyak/uring/queue"
 )
 
 var (
 	// ErrOverflow returned if requested buffer number larget then max number.
 	ErrOverflow = errors.New("buffer number overflow")
 )
-
-// Registry ...
-type Registry interface {
-	RegisterBuffers(unsafe.Pointer, uint64) error
-}
 
 var iovecSize = int(unsafe.Sizeof(syscall.Iovec{}))
 
@@ -28,7 +25,7 @@ type allocator struct {
 	// buffers - list of buffers of the same size.
 	mem []byte
 
-	reg Registry
+	reg *queue.Queue
 }
 
 func (a *allocator) init() error {

@@ -19,7 +19,7 @@ func RegisterFiles(n int) FilesystemOption {
 	}
 }
 
-func NewFilesystem(queue *queue.ShardedQueue, opts ...FilesystemOption) *Filesystem {
+func NewFilesystem(queue *queue.Queue, opts ...FilesystemOption) *Filesystem {
 	fsm := &Filesystem{queue: queue}
 	for _, opt := range opts {
 		opt(fsm)
@@ -29,7 +29,7 @@ func NewFilesystem(queue *queue.ShardedQueue, opts ...FilesystemOption) *Filesys
 
 // Filesystem is a facade for all fs-related functionality.
 type Filesystem struct {
-	queue *queue.ShardedQueue
+	queue *queue.Queue
 
 	fixedFiles *fixedFiles
 }

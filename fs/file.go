@@ -32,7 +32,7 @@ type File struct {
 	// additional sqe flags
 	flags uint8
 
-	queue      *queue.ShardedQueue
+	queue      *queue.Queue
 	fixedFiles *fixedFiles
 }
 

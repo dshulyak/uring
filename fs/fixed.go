@@ -2,15 +2,11 @@ package fs
 
 import (
 	"sync"
+
+	"github.com/dshulyak/uring/queue"
 )
 
-type Registry interface {
-	RegisterFiles([]int32) error
-	UpdateFiles([]int32, uint32) error
-	UnregisterFiles() error
-}
-
-func newFixedFiles(reg Registry, n int) *fixedFiles {
+func newFixedFiles(reg *queue.Queue, n int) *fixedFiles {
 	fds := make([]int32, n)
 	for i := range fds {
 		fds[i] = -1
@@ -29,7 +25,7 @@ type fixedFiles struct {
 	// registered might be lower than len(fds) if some of the fds are -1
 	registered int
 
-	reg Registry
+	reg *queue.Queue
 }
 
 func (f *fixedFiles) register(fd uintptr) (uintptr, error) {

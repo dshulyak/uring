@@ -6,7 +6,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
-	"unsafe"
 
 	"github.com/dshulyak/uring"
 )
@@ -43,65 +42,27 @@ func (r *Result) Dispose() {
 	resultPool.Put(r)
 }
 
-// QueueOption ...
-type QueueOption func(q *Queue)
-
-// WAIT will make completion loop to Enter with minComplete=1.
-// During idle periods completionLoop thread will sleep.
-//
-// Registering files and buffers requires uring to become idle, with WAIT we are
-// entering the queue and waiting until the next event is completed. Even if queue is
-// empty this makes uring think that it is not idle. As a consequence Registering files
-// or buffers leads to deadlock.
-func WAIT(q *Queue) {
-	q.minComplete = 1
-}
-
-// POLL will make completion loop to poll uring completion queue until
-// entry is available.
-// Polling is somewhat faster but will use more cpu, especially during idle periods.
-func POLL(q *Queue) {
-	q.minComplete = 0
-}
-
-// Setup io_uring instance and return instance of the queue.
-func Setup(size uint, params *uring.IOUringParams, opts ...QueueOption) (*Queue, error) {
-	ring, err := uring.Setup(size, params)
-	if err != nil {
-		return nil, err
-	}
-	q := New(ring)
-	for _, opt := range opts {
-		opt(q)
-	}
-	return q, nil
-}
-
-func New(ring *uring.Ring) *Queue {
-	q := newQueue(ring)
-	q.closeRing = true
-	q.wg.Add(1)
-	go q.completionLoop()
-	return q
-}
-
-func newQueue(ring *uring.Ring) *Queue {
+func newQueue(ring *uring.Ring, qp *Params) *queue {
 	var (
-		inflight uint32
-		reqmu    sync.Mutex
+		inflight    uint32
+		reqmu       sync.Mutex
+		minComplete uint32
 	)
-	return &Queue{
-		ring:     ring,
-		reqCond:  sync.NewCond(&reqmu),
-		results:  make(map[uint64]*Result, ring.CQSize()),
-		inflight: &inflight,
+	if qp.WaitMethod == WaitEnter {
+		minComplete = 1
+	}
+	return &queue{
+		ring:        ring,
+		reqCond:     sync.NewCond(&reqmu),
+		results:     make(map[uint64]*Result, ring.CQSize()),
+		inflight:    &inflight,
+		minComplete: minComplete,
 	}
 }
 
-// Queue provides thread safe access to uring.Ring instance.
-type Queue struct {
+// queue provides thread safe access to uring.Ring instance.
+type queue struct {
 	ring        *uring.Ring
-	closeRing   bool
 	minComplete uint32
 
 	reqCond *sync.Cond
@@ -115,15 +76,19 @@ type Queue struct {
 	inflight *uint32
 }
 
+func (q *queue) startCompletionLoop() {
+	q.wg.Add(1)
+	go q.completionLoop()
+}
+
 // completionLoop ...
-// Spinning with gosched allows to reap completions ~20% faster.
-func (q *Queue) completionLoop() {
+func (q *queue) completionLoop() {
 	defer q.wg.Done()
 	for q.tryComplete() {
 	}
 }
 
-func (q *Queue) tryComplete() bool {
+func (q *queue) tryComplete() bool {
 	cqe, err := q.ring.GetCQEntry(q.minComplete)
 	// EAGAIN - if head is equal to tail of completion queue
 	if err == syscall.EAGAIN || err == syscall.EINTR {
@@ -154,7 +119,7 @@ func (q *Queue) tryComplete() bool {
 	return true
 }
 
-func (q *Queue) prepare() (*uring.SQEntry, error) {
+func (q *queue) prepare() (*uring.SQEntry, error) {
 	q.reqCond.L.Lock()
 	if q.closed {
 		q.reqCond.L.Unlock()
@@ -180,7 +145,7 @@ func (q *Queue) prepare() (*uring.SQEntry, error) {
 	}
 }
 
-func (q *Queue) completeAsync(sqe *uring.SQEntry) (*Result, error) {
+func (q *queue) completeAsync(sqe *uring.SQEntry) (*Result, error) {
 	req := resultPool.Get().(*Result)
 
 	q.rmu.Lock()
@@ -204,7 +169,7 @@ func (q *Queue) completeAsync(sqe *uring.SQEntry) (*Result, error) {
 	return req, nil
 }
 
-func (q *Queue) complete(sqe *uring.SQEntry) (uring.CQEntry, error) {
+func (q *queue) complete(sqe *uring.SQEntry) (uring.CQEntry, error) {
 	req, err := q.completeAsync(sqe)
 	if err != nil {
 		return uring.CQEntry{}, err
@@ -218,16 +183,14 @@ func (q *Queue) complete(sqe *uring.SQEntry) (uring.CQEntry, error) {
 	return cqe, nil
 }
 
-func (q *Queue) Ring() *uring.Ring {
+func (q *queue) Ring() *uring.Ring {
 	return q.ring
 }
-
-//go:uintptrescapes
 
 // Syscall ...
 // Do not hide this call behind interface.
 // https://github.com/golang/go/issues/16035#issuecomment-231107512.
-func (q *Queue) Syscall(opts func(*uring.SQEntry), ptrs ...uintptr) (uring.CQEntry, error) {
+func (q *queue) Syscall(opts func(*uring.SQEntry), ptrs ...uintptr) (uring.CQEntry, error) {
 	sqe, err := q.prepare()
 	if err != nil {
 		return uring.CQEntry{}, err
@@ -238,7 +201,7 @@ func (q *Queue) Syscall(opts func(*uring.SQEntry), ptrs ...uintptr) (uring.CQEnt
 
 // Complete blocks until an available submission exists, submits and blocks until completed.
 // Goroutine that executes Complete will be parked.
-func (q *Queue) Complete(f func(*uring.SQEntry)) (uring.CQEntry, error) {
+func (q *queue) Complete(f func(*uring.SQEntry)) (uring.CQEntry, error) {
 	sqe, err := q.prepare()
 	if err != nil {
 		return uring.CQEntry{}, err
@@ -250,7 +213,7 @@ func (q *Queue) Complete(f func(*uring.SQEntry)) (uring.CQEntry, error) {
 // CompleteAsync blocks until an available submission exists, submits and returns future-like object.
 // Caller must ensure pointers that were used for SQEntry will remain valid until completon.
 // After request completed - caller should call result.Dispose()
-func (q *Queue) CompleteAsync(f func(*uring.SQEntry)) (*Result, error) {
+func (q *queue) CompleteAsync(f func(*uring.SQEntry)) (*Result, error) {
 	sqe, err := q.prepare()
 	if err != nil {
 		return nil, err
@@ -259,7 +222,7 @@ func (q *Queue) CompleteAsync(f func(*uring.SQEntry)) (*Result, error) {
 	return q.completeAsync(sqe)
 }
 
-func (q *Queue) Close() error {
+func (q *queue) Close() error {
 	q.reqCond.L.Lock()
 	q.closed = true
 	q.reqCond.Broadcast()
@@ -279,16 +242,5 @@ func (q *Queue) Close() error {
 		close(req.ch)
 		delete(q.results, nonce)
 	}
-	if q.closeRing {
-		return q.ring.Close()
-	}
 	return nil
-}
-
-func (q *Queue) RegisterBuffers(ptr unsafe.Pointer, len uint64) error {
-	return q.Ring().RegisterBuffers(ptr, len)
-}
-
-func (q *Queue) RegisterFiles(fds []int32) error {
-	return q.Ring().RegisterFiles(fds)
 }
