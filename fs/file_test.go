@@ -2,6 +2,7 @@ package fs
 
 import (
 	"encoding/binary"
+	"io/ioutil"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -11,6 +12,7 @@ import (
 	"github.com/dshulyak/uring/fixed"
 	"github.com/dshulyak/uring/queue"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 )
 
 func TestReadAtWriteAt(t *testing.T) {
@@ -20,9 +22,11 @@ func TestReadAtWriteAt(t *testing.T) {
 
 	fsm := NewFilesystem(queue)
 
-	f, err := TempFile(fsm, "", "testing-fs-file-")
+	f, err := TempFile(fsm, "testing-fs-file-", 0)
 	require.NoError(t, err)
-	defer os.Remove(f.Name())
+	t.Cleanup(func() {
+		os.Remove(f.Name())
+	})
 
 	pool, err := fixed.New(queue, 4, 2)
 	require.NoError(t, err)
@@ -51,30 +55,81 @@ func TestReadAtWriteAt(t *testing.T) {
 	require.NoError(t, f.Close())
 }
 
-func BenchmarkWriteAt(b *testing.B) {
-	queue, err := queue.SetupSharded(8, 4096, &uring.IOUringParams{
-		CQEntries: 8 * 2048,
-		Flags:     uring.IORING_SETUP_CQSIZE,
-	})
+func BenchmarkWriteAtOS(b *testing.B) {
+	f, err := ioutil.TempFile("", "testing-write-os-")
 	require.NoError(b, err)
-	defer queue.Close()
+	require.NoError(b, f.Close())
+	f, err = os.OpenFile(f.Name(), os.O_RDWR|unix.O_DSYNC, 06444)
+	require.NoError(b, err)
+	b.Cleanup(func() {
+		os.Remove(f.Name())
+	})
+
+	size := int64(256 << 10)
+	buf := make([]byte, size)
+	offset := int64(0)
+
+	b.SetBytes(size)
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			_, err := f.WriteAt(buf, atomic.AddInt64(&offset, size)-size)
+			if err != nil {
+				b.Error(err)
+			}
+		}
+	})
+}
+
+func BenchmarkReadAtOS(b *testing.B) {
+	f, err := ioutil.TempFile("", "testing-write-os-")
+	require.NoError(b, err)
+	b.Cleanup(func() {
+		os.Remove(f.Name())
+	})
+
+	size := int64(256 << 10)
+	buf := make([]byte, size)
+	offset := int64(0)
+
+	for i := 0; i < b.N; i++ {
+		_, err := f.WriteAt(buf, int64(i)*size)
+		require.NoError(b, err)
+	}
+
+	b.SetBytes(size)
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			_, err := f.ReadAt(buf, atomic.AddInt64(&offset, size)-size)
+			if err != nil {
+				b.Error(err)
+			}
+		}
+	})
+}
+
+func BenchmarkWriteAtDsync(b *testing.B) {
+	queue, err := queue.SetupSharded(50, 128, &uring.IOUringParams{
+		CQEntries: 4096,
+		Flags:     uring.IORING_SETUP_CQSIZE,
+	}, queue.OptRoundRobin)
+	require.NoError(b, err)
+	b.Cleanup(func() { queue.Close() })
 
 	fsm := NewFilesystem(queue)
 
-	f, err := TempFile(fsm, "", "testing-fs-file-")
+	f, err := TempFile(fsm, "testing-fs-file-", unix.O_DSYNC)
 	require.NoError(b, err)
-	defer os.Remove(f.Name())
+	b.Cleanup(func() { os.Remove(f.Name()) })
 
 	size := int64(256 << 10)
-	pool, err := fixed.New(queue, int(size), 1)
-	require.NoError(b, err)
-	defer pool.Close()
 	offset := int64(0)
-
-	buf := pool.Get()
-
-	workers := 10000
-	n := b.N / workers
+	buf := make([]byte, size)
 
 	var wg sync.WaitGroup
 
@@ -82,15 +137,13 @@ func BenchmarkWriteAt(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for w := 0; w < workers; w++ {
+	for w := 0; w < b.N; w++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for i := 0; i < n; i++ {
-				_, err := f.WriteAtFixed(buf, atomic.AddInt64(&offset, size)-size)
-				if err != nil {
-					b.Error(err)
-				}
+			_, err := f.WriteAt(buf, atomic.AddInt64(&offset, size)-size)
+			if err != nil {
+				b.Error(err)
 			}
 		}()
 	}
@@ -98,7 +151,7 @@ func BenchmarkWriteAt(b *testing.B) {
 }
 
 func BenchmarkReadAt(b *testing.B) {
-	queue, err := queue.SetupSharded(8, 512, &uring.IOUringParams{
+	queue, err := queue.SetupSharded(8, 1024, &uring.IOUringParams{
 		CQEntries: 8 * 1024,
 		Flags:     uring.IORING_SETUP_CQSIZE,
 	})
@@ -107,20 +160,17 @@ func BenchmarkReadAt(b *testing.B) {
 
 	fsm := NewFilesystem(queue)
 
-	f, err := TempFile(fsm, "", "testing-fs-file-")
+	f, err := TempFile(fsm, "testing-fs-file-", 0)
 	require.NoError(b, err)
-	defer os.Remove(f.Name())
+	b.Cleanup(func() {
+		os.Remove(f.Name())
+	})
 
 	size := int64(256 << 10)
 	offset := int64(0)
-
-	pool, err := fixed.New(queue, int(size), 1)
-	require.NoError(b, err)
-	defer pool.Close()
-
-	buf := pool.Get()
+	buf := make([]byte, size)
 	for i := 0; i < b.N; i++ {
-		_, err := f.WriteAtFixed(buf, int64(i)*size)
+		_, err := f.WriteAt(buf, int64(i)*size)
 		require.NoError(b, err)
 	}
 
@@ -128,23 +178,19 @@ func BenchmarkReadAt(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	workers := 10000
-	n := b.N / workers
-
 	var wg sync.WaitGroup
 
 	b.SetBytes(int64(size))
 	b.ReportAllocs()
 	b.ResetTimer()
-	for w := 0; w < workers; w++ {
+
+	for w := 0; w < b.N; w++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for i := 0; i < n; i++ {
-				_, err := f.ReadAtFixed(buf, atomic.AddInt64(&offset, size)-size)
-				if err != nil {
-					b.Error(err)
-				}
+			_, err := f.ReadAt(buf, atomic.AddInt64(&offset, size)-size)
+			if err != nil {
+				b.Error(err)
 			}
 		}()
 	}
@@ -158,8 +204,11 @@ func TestEmptyWrite(t *testing.T) {
 
 	fsm := NewFilesystem(queue)
 
-	f, err := TempFile(fsm, "", "testing-fs-file-")
+	f, err := TempFile(fsm, "testing-fs-file-", 0)
 	require.NoError(t, err)
+	t.Cleanup(func() {
+		os.Remove(f.Name())
+	})
 
 	n, err := f.WriteAt(nil, 0)
 	require.Equal(t, 0, n)
@@ -173,9 +222,11 @@ func TestConcurrentWritesIntegrity(t *testing.T) {
 
 	fsm := NewFilesystem(queue)
 
-	f, err := TempFile(fsm, "", "test-concurrent-writes-")
+	f, err := TempFile(fsm, "test-concurrent-writes", 0)
 	require.NoError(t, err)
-	defer os.Remove(f.Name())
+	t.Cleanup(func() {
+		os.Remove(f.Name())
+	})
 
 	var wg sync.WaitGroup
 	var n int64 = 30000

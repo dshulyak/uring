@@ -47,7 +47,7 @@ func (fsm *Filesystem) Open(name string, flags int, mode os.FileMode) (*File, er
 		return nil, err
 	}
 	if cqe.Result() < 0 {
-		return nil, syscall.Errno(cqe.Result())
+		return nil, syscall.Errno(-cqe.Result())
 	}
 
 	fd := uintptr(cqe.Result())
