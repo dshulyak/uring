@@ -65,7 +65,7 @@ func (fsm *Filesystem) Open(name string, flags int, mode os.FileMode) (*File, er
 			return nil, err
 		}
 		f.ufd = idx
-		f.flags = uring.IOSQE_FIXED_FILE
+		f.flags |= uring.IOSQE_FIXED_FILE
 	}
 	return f, nil
 }
