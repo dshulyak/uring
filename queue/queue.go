@@ -231,6 +231,7 @@ func (q *queue) Close() error {
 	sqe := q.ring.GetSQEntry()
 	uring.Nop(sqe)
 	sqe.SetUserData(closed)
+	sqe.SetFlags(uring.IOSQE_IO_DRAIN)
 
 	_, err := q.ring.Submit(0)
 	if err != nil {
