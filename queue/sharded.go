@@ -151,17 +151,17 @@ func setupSharded(q *Queue, size uint, params *uring.IOUringParams) error {
 
 func (q *Queue) epollLoop() {
 	defer q.wg.Done()
+	var exit uint64
 	for {
-		exit := false
 		if err := q.poll.wait(func(efd int32) {
 			if !q.byEventfd[efd].tryComplete() {
-				exit = true
+				exit++
 				return
 			}
 		}); err != nil {
 			panic(err)
 		}
-		if exit {
+		if exit == q.n {
 			return
 		}
 	}
