@@ -7,6 +7,7 @@ import (
 
 	"github.com/dshulyak/uring"
 	"github.com/dshulyak/uring/queue"
+	"golang.org/x/sys/unix"
 )
 
 const _AT_FDCWD int32 = -0x64
@@ -63,6 +64,9 @@ func (fsm *Filesystem) Open(name string, flags int, mode os.FileMode) (*File, er
 		name:       name,
 		queue:      fsm.queue,
 		fixedFiles: fsm.fixedFiles,
+	}
+	if flags&os.O_SYNC > 0 || flags&unix.O_DSYNC > 0 {
+		f.flags |= uring.IOSQE_ASYNC
 	}
 	if fsm.fixedFiles != nil {
 		idx, err := fsm.fixedFiles.register(f.Fd())

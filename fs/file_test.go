@@ -148,19 +148,14 @@ func benchmarkOSReadAt(b *testing.B, size int64) {
 
 func BenchmarkWriteAt(b *testing.B) {
 	for _, size := range []int64{8 << 10, 256 << 10, 1 << 20} {
-		b.Run(fmt.Sprintf("uring sharded rr dsync %d", size), func(b *testing.B) {
+		b.Run(fmt.Sprintf("uring sharded default dsync %d", size), func(b *testing.B) {
 			q, err := queue.Setup(
-				128,
+				512,
 				&uring.IOUringParams{
 					CQEntries: 4096,
 					Flags:     uring.IORING_SETUP_CQSIZE,
 				},
-				&queue.Params{
-					// in this case 50 is the number of workers used by uring
-					Shards:           50,
-					ShardingStrategy: queue.ShardingRoundRobin,
-					WaitMethod:       queue.WaitEventfd,
-				},
+				nil,
 			)
 			require.NoError(b, err)
 			benchmarkWriteAt(b, q, size, unix.O_DSYNC)
