@@ -94,58 +94,74 @@ func setupSimple(q *Queue, size uint, params *uring.IOUringParams) error {
 	return nil
 }
 
-func setupSharded(q *Queue, size uint, params *uring.IOUringParams) error {
+func setupSharded(q *Queue, size uint, params *uring.IOUringParams) (err error) {
 	var (
 		queues     = make([]*queue, q.qparams.Shards)
 		paramsCopy uring.IOUringParams
 	)
 
+	q.poll, err = newPoll(len(queues))
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = q.poll.close()
+		}
+	}()
 	if params != nil {
 		paramsCopy = *params
 	}
+	var ring *uring.Ring
+	defer func() {
+		if err != nil {
+			for _, subq := range queues {
+				if subq != nil {
+					_ = subq.Ring().Close()
+				}
+			}
+		}
+	}()
 	for i := range queues {
 		use := paramsCopy
 		if q.qparams.Flags&FlagSharedWorkers > 0 && i > 0 {
 			use.Flags |= uring.IORING_SETUP_ATTACH_WQ
 			use.WQFd = uint32(queues[0].Ring().Fd())
 		}
-		ring, err := uring.Setup(size, &use)
+		ring, err = uring.Setup(size, &use)
 		if err != nil {
-			return err
+			return
 		}
 		queues[i] = newQueue(ring, q.qparams)
 	}
 
 	byEventfd := make(map[int32]*queue, len(queues))
-	pl, err := newPoll(len(queues))
-	if err != nil {
-		panic(err)
-	}
 	shardsList := make([]int32, len(queues))
 	for i, qu := range queues {
 		ring := qu.Ring()
 		for {
-			if err := ring.SetupEventfd(); err != nil {
+			err = ring.SetupEventfd()
+			if err != nil {
 				if err == syscall.EINTR {
 					continue
 				}
-				panic(err)
+				return
 			}
 			break
 		}
 		shardsList[i] = int32(ring.Eventfd())
-		if err := pl.addRead(int32(ring.Eventfd())); err != nil {
-			panic(err)
+		err = q.poll.addRead(int32(ring.Eventfd()))
+		if err != nil {
+			return
 		}
 		byEventfd[int32(ring.Eventfd())] = qu
 	}
 	q.shards = shardsList
 	q.n = uint64(q.qparams.Shards)
 	q.byEventfd = byEventfd
-	q.poll = pl
 	q.wg.Add(1)
 	go q.epollLoop()
-	return nil
+	return
 }
 
 func (q *Queue) epollLoop() {
