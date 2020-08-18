@@ -37,8 +37,8 @@ func (a *allocator) init() error {
 		return err
 	}
 	a.mem = mem
-	iovec := syscall.Iovec{Base: &mem[0], Len: uint64(size)}
-	return a.reg.RegisterBuffers(unsafe.Pointer(&iovec), 1)
+	iovec := []syscall.Iovec{{Base: &mem[0], Len: uint64(size)}}
+	return a.reg.RegisterBuffers(iovec)
 }
 
 func (a *allocator) close() error {

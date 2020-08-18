@@ -24,7 +24,6 @@ func makeFiles(tb testing.TB, n int) []*os.File {
 }
 
 func TestFixedFiles(t *testing.T) {
-	t.Skip("UnregisterFiles fails unpredictably")
 	queue, err := queue.Setup(32, nil, nil)
 	require.NoError(t, err)
 	defer queue.Close()

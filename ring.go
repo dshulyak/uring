@@ -101,28 +101,18 @@ func (r *Ring) SQSize() uint32 {
 	return r.params.SQEntries
 }
 
-func (r *Ring) SQSlots() uint32 {
-	return *r.sq.ringEntries - (r.sq.sqeTail - atomic.LoadUint32(r.sq.head))
-}
-
-func (r *Ring) SQSlotsAvailable() bool {
-	return *r.sq.ringEntries > (r.sq.sqeTail - atomic.LoadUint32(r.sq.head))
-}
-
-func (r *Ring) CQSlots() uint32 {
-	return *r.cq.ringEntries - (atomic.LoadUint32(r.cq.tail) - *r.cq.head)
-}
-
 // GetSQEntry returns earliest available SQEntry. May return nil if there are
-// not available entries.
+// no available entries.
 // Entry can be reused after Submit or Enter.
-// Correct usage:
+//
 //   sqe := ring.GetSQEntry()
 //   ring.Submit(0)
+//
 // ... or ...
+//
 //   sqe := ring.GetSQEntry()
 //   ring.Flush()
-//   ring.Enter(0, 0)
+//   ring.Enter(1, 0)
 func (r *Ring) GetSQEntry() *SQEntry {
 	head := atomic.LoadUint32(r.sq.head)
 	next := r.sq.sqeTail + 1

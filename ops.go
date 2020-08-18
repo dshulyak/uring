@@ -94,17 +94,6 @@ func Close(sqe *SQEntry, fd uintptr) {
 	sqe.fd = int32(fd)
 }
 
-// Accept filler for accept4 syscall (man accept4).
-// sockaddr and size may vary based on the socket type.
-// supported flags - syscall.SOCK_CLOEXEC and SOCK_NONBLOCK.
-func Accept(sqe *SQEntry, fd uintptr, sockaddr, size uint64, flags uint32) {
-	sqe.SetOpcode(IORING_OP_ACCEPT)
-	sqe.SetFD(int32(fd))
-	sqe.SetOpcodeFlags(uint32(flags))
-	sqe.SetAddr(sockaddr)
-	sqe.SetAddr2(size)
-}
-
 // Connect ...
 // man connect
 // TODO replace sockaddr, size with types

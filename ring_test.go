@@ -7,7 +7,6 @@ import (
 	"syscall"
 	"testing"
 	"time"
-	"unsafe"
 
 	"github.com/stretchr/testify/require"
 )
@@ -174,39 +173,6 @@ func TestCopy(t *testing.T) {
 	require.Equal(t, fromData, toData)
 }
 
-func TestRegisterProbe(t *testing.T) {
-	ring, err := Setup(4, nil)
-	require.NoError(t, err)
-	defer ring.Close()
-
-	var probe Probe
-	require.NoError(t, ring.RegisterProbe(&probe))
-	require.True(t, probe.IsSupported(IORING_OP_NOP))
-}
-
-func TestRegisterUpdateFiles(t *testing.T) {
-	ring, err := Setup(4, nil)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		ring.Close()
-	})
-
-	f1, err := ioutil.TempFile("", "testing-reg-update-")
-	require.NoError(t, err)
-	defer os.Remove(f1.Name())
-	f2, err := ioutil.TempFile("", "testing-reg-update-")
-	require.NoError(t, err)
-	defer os.Remove(f1.Name())
-
-	for r := 0; r < 10; r++ {
-		fds := []int32{int32(f1.Fd()), -1}
-		require.NoError(t, ring.RegisterFiles(fds))
-		fds[1] = int32(f2.Fd())
-		require.NoError(t, ring.UpdateFiles(fds, 0))
-		require.NoError(t, ring.UnregisterFiles())
-	}
-}
-
 func TestReuseSQEntries(t *testing.T) {
 	ring, err := Setup(2, nil)
 	require.NoError(t, err)
@@ -305,7 +271,7 @@ func TestReadWriteFixed(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, ring.RegisterBuffers(unsafe.Pointer(&iovec[0]), 2))
+	require.NoError(t, ring.RegisterBuffers(iovec))
 
 	sqe := ring.GetSQEntry()
 	WriteFixed(sqe, f.Fd(), iovec[0].Base, iovec[0].Len, 0, 0, 0)

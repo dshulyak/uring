@@ -20,13 +20,16 @@ const (
 )
 
 const (
+	// IO_URING_OP_SUPPORTED ...
 	IO_URING_OP_SUPPORTED uint16 = 1 << 0
 )
 
 const (
+	// probeOpsSize is uintptr so that it can be passed to syscall without casting
 	probeOpsSize = uintptr(IORING_OP_LAST) + 1
 )
 
+// Probe ...
 type Probe struct {
 	LastOp uint8
 	OpsLen uint8
@@ -35,6 +38,7 @@ type Probe struct {
 	Ops    [probeOpsSize]ProbeOp
 }
 
+// IsSupported returns true if operation is supported.
 func (p Probe) IsSupported(op uint8) bool {
 	for i := uint8(0); i < p.OpsLen; i++ {
 		if p.Ops[i].Op != op {
@@ -45,6 +49,7 @@ func (p Probe) IsSupported(op uint8) bool {
 	return false
 }
 
+// ProbeOp ...
 type ProbeOp struct {
 	Op    uint8
 	resv  uint8
@@ -52,6 +57,7 @@ type ProbeOp struct {
 	resv2 uint32
 }
 
+// RegisterProbe ...
 func (r *Ring) RegisterProbe(probe *Probe) error {
 	for {
 		_, _, errno := syscall.Syscall6(
@@ -70,6 +76,7 @@ func (r *Ring) RegisterProbe(probe *Probe) error {
 	}
 }
 
+// RegisterFiles ...
 func (r *Ring) RegisterFiles(fds []int32) error {
 	for {
 		_, _, errno := syscall.Syscall6(
@@ -88,13 +95,14 @@ func (r *Ring) RegisterFiles(fds []int32) error {
 	}
 }
 
+// UnregisterFiles ...
 func (r *Ring) UnregisterFiles() error {
 	for {
-		_, _, errno := syscall.Syscall(
+		_, _, errno := syscall.Syscall6(
 			IO_URING_REGISTER,
 			uintptr(r.fd),
 			IORING_UNREGISTER_FILES,
-			0)
+			0, 0, 0, 0)
 		if errno > 0 {
 			if errno == syscall.EINTR {
 				continue
@@ -105,6 +113,7 @@ func (r *Ring) UnregisterFiles() error {
 	}
 }
 
+// UpdateFiles ...
 func (r *Ring) UpdateFiles(fds []int32, off uint32) error {
 	update := IOUringFilesUpdate{
 		Offset: off,
@@ -127,14 +136,18 @@ func (r *Ring) UpdateFiles(fds []int32, off uint32) error {
 	}
 }
 
-func (r *Ring) RegisterBuffers(ptr unsafe.Pointer, len uint64) error {
+// RegisterBuffers ...
+func (r *Ring) RegisterBuffers(iovec []syscall.Iovec) error {
+	if len(iovec) == 0 {
+		return nil
+	}
 	for {
 		_, _, errno := syscall.Syscall6(
 			IO_URING_REGISTER,
 			uintptr(r.fd),
 			IORING_REGISTER_BUFFERS,
-			uintptr(ptr),
-			uintptr(len), 0, 0)
+			uintptr(unsafe.Pointer(&iovec[0])),
+			uintptr(len(iovec)), 0, 0)
 		if errno > 0 {
 			if errno == syscall.EINTR {
 				continue
@@ -145,13 +158,14 @@ func (r *Ring) RegisterBuffers(ptr unsafe.Pointer, len uint64) error {
 	}
 }
 
+// UnregisterBuffers ...
 func (r *Ring) UnregisterBuffers() error {
 	for {
-		_, _, errno := syscall.Syscall(
+		_, _, errno := syscall.Syscall6(
 			IO_URING_REGISTER,
 			uintptr(r.fd),
 			IORING_UNREGISTER_BUFFERS,
-			0)
+			0, 0, 0, 0)
 		if errno > 0 {
 			if errno == syscall.EINTR {
 				continue
@@ -162,6 +176,7 @@ func (r *Ring) UnregisterBuffers() error {
 	}
 }
 
+// SetupEventfd creates eventfd and registers it with current uring instance.
 func (r *Ring) SetupEventfd() error {
 	if r.eventfd == 0 {
 		r0, _, errno := syscall.Syscall(syscall.SYS_EVENTFD2, 0, 0, 0)
@@ -183,17 +198,17 @@ func (r *Ring) SetupEventfd() error {
 	}
 }
 
+// CloseEventfd unregsiters eventfd from uring istance and closes associated fd.
 func (r *Ring) CloseEventfd() error {
-	if r.eventfd != 0 {
+	if r.eventfd == 0 {
 		return nil
 	}
 	var errno syscall.Errno
 	for {
-		_, _, errno = syscall.Syscall(IO_URING_REGISTER, uintptr(r.fd), IORING_UNREGISTER_EVENTFD, 0)
-		if errno == syscall.EINTR {
-			continue
+		_, _, errno = syscall.Syscall6(IO_URING_REGISTER, uintptr(r.fd), IORING_UNREGISTER_EVENTFD, 0, 0, 0, 0)
+		if errno != syscall.EINTR {
+			break
 		}
-
 	}
 	if err := syscall.Close(int(r.eventfd)); err != nil {
 		return err
