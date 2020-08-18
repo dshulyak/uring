@@ -11,14 +11,19 @@ import (
 
 const _AT_FDCWD int32 = -0x64
 
+// FilesystemOption ...
 type FilesystemOption func(*Filesystem)
 
+// RegisterFiles enables file registration in uring when file is opened.
+// n is a hint to for fds slice allocation. When fds slice needs to grow
+// registration module will have to perform two syscalls (unregister files, register files).
 func RegisterFiles(n int) FilesystemOption {
 	return func(fsm *Filesystem) {
 		fsm.fixedFiles = newFixedFiles(fsm.queue, n)
 	}
 }
 
+// NewFilesystem returns facade for interacting with uring-based filesystem functionality.
 func NewFilesystem(queue *queue.Queue, opts ...FilesystemOption) *Filesystem {
 	fsm := &Filesystem{queue: queue}
 	for _, opt := range opts {
@@ -34,6 +39,7 @@ type Filesystem struct {
 	fixedFiles *fixedFiles
 }
 
+// Open a file.
 func (fsm *Filesystem) Open(name string, flags int, mode os.FileMode) (*File, error) {
 	_p0, err := syscall.BytePtrFromString(name)
 	if err != nil {

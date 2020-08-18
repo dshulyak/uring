@@ -1,12 +1,14 @@
 package fs
 
 import (
+	"crypto/rand"
 	"encoding/binary"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 
 	"github.com/dshulyak/uring"
@@ -16,44 +18,76 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func TestReadAtWriteAt(t *testing.T) {
-	queue, err := queue.Setup(1024, nil, nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { queue.Close() })
+func TestFixedBuffersIO(t *testing.T) {
+	tester := func(t *testing.T, fsm *Filesystem, pool *fixed.Pool) {
+		t.Helper()
+		f, err := TempFile(fsm, "testing-io-", 0)
+		require.NoError(t, err)
+		t.Cleanup(func() { os.Remove(f.Name()) })
 
-	fsm := NewFilesystem(queue)
+		in, out := pool.Get(), pool.Get()
+		rand.Read(out.B)
 
-	f, err := TempFile(fsm, "testing-fs-file-", 0)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		os.Remove(f.Name())
+		_, err = f.WriteAtFixed(out, 0)
+		require.NoError(t, err)
+		require.NoError(t, f.Datasync())
+		_, err = f.ReadAtFixed(in, 0)
+		require.NoError(t, err)
+		require.Equal(t, in.B, out.B)
+	}
+	t.Run("registered", func(t *testing.T) {
+		q, err := queue.Setup(32, nil, nil)
+		require.NoError(t, err)
+		t.Cleanup(func() { q.Close() })
+		fsm := NewFilesystem(q, RegisterFiles(32))
+		pool, err := fixed.New(q, 100, 2)
+		require.NoError(t, err)
+		t.Cleanup(func() { pool.Close() })
+		tester(t, fsm, pool)
 	})
+	t.Run("unregistered", func(t *testing.T) {
+		q, err := queue.Setup(32, nil, nil)
+		require.NoError(t, err)
+		t.Cleanup(func() { q.Close() })
+		fsm := NewFilesystem(q)
+		pool, err := fixed.New(q, 100, 2)
+		require.NoError(t, err)
+		t.Cleanup(func() { pool.Close() })
+		tester(t, fsm, pool)
+	})
+}
 
-	pool, err := fixed.New(queue, 4, 2)
-	require.NoError(t, err)
-	t.Cleanup(func() { pool.Close() })
+func TestRegularIO(t *testing.T) {
+	tester := func(t *testing.T, fsm *Filesystem) {
+		t.Helper()
+		f, err := TempFile(fsm, "testing-io-", 0)
+		require.NoError(t, err)
+		t.Cleanup(func() { os.Remove(f.Name()) })
 
-	in, out := pool.Get(), pool.Get()
-	copy(out.Bytes(), []byte("ping"))
-	_, err = f.WriteAtFixed(out, 0)
-	require.NoError(t, err)
+		in, out := make([]byte, 100), make([]byte, 100)
+		rand.Read(out)
 
-	n, err := f.ReadAtFixed(in, 0)
-	require.NoError(t, err)
-	require.Equal(t, int(out.Len()), n)
-	require.Equal(t, out.Bytes(), in.Bytes())
-
-	copy(out.Bytes(), []byte("pong"))
-	n, err = f.WriteAtFixed(out, 0)
-	require.NoError(t, err)
-	require.Equal(t, int(out.Len()), n)
-
-	n, err = f.ReadAtFixed(in, 0)
-	require.NoError(t, err)
-	require.Equal(t, int(out.Len()), n)
-	require.Equal(t, string(out.Bytes()), string(in.Bytes()))
-
-	require.NoError(t, f.Close())
+		_, err = f.WriteAt(out, 0)
+		require.NoError(t, err)
+		require.NoError(t, f.Sync())
+		_, err = f.ReadAt(in, 0)
+		require.NoError(t, err)
+		require.Equal(t, in, out)
+	}
+	t.Run("registered", func(t *testing.T) {
+		q, err := queue.Setup(32, nil, nil)
+		require.NoError(t, err)
+		t.Cleanup(func() { q.Close() })
+		fsm := NewFilesystem(q, RegisterFiles(32))
+		tester(t, fsm)
+	})
+	t.Run("unregistered", func(t *testing.T) {
+		q, err := queue.Setup(32, nil, nil)
+		require.NoError(t, err)
+		t.Cleanup(func() { q.Close() })
+		fsm := NewFilesystem(q)
+		tester(t, fsm)
+	})
 }
 
 func benchmarkOSWriteAt(b *testing.B, size int64, fflags int) {
@@ -351,6 +385,24 @@ func TestEmptyWrite(t *testing.T) {
 	n, err := f.WriteAt(nil, 0)
 	require.Equal(t, 0, n)
 	require.NoError(t, err)
+}
+
+func TestClose(t *testing.T) {
+	queue, err := queue.Setup(8, nil, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { queue.Close() })
+
+	fsm := NewFilesystem(queue)
+
+	f, err := TempFile(fsm, "test-concurrent-writes", 0)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		os.Remove(f.Name())
+	})
+	require.NoError(t, f.Close())
+	buf := []byte{1, 2}
+	_, err = f.WriteAt(buf, 0)
+	require.Equal(t, syscall.EBADF, err)
 }
 
 func TestConcurrentWritesIntegrity(t *testing.T) {
