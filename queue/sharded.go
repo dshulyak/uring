@@ -189,52 +189,25 @@ func (q *Queue) getQueue() *queue {
 
 //go:uintptrescapes
 
-// Syscall ...
-// Do not hide this call behind interface.
+// Syscall is a helper to lock pointers that are sent to uring in place. Otherwise this is identical to Complete.
+// WARNING: don't use interface that hides this method.
 // https://github.com/golang/go/issues/16035#issuecomment-231107512.
 func (q *Queue) Syscall(opts func(*uring.SQEntry), ptrs ...uintptr) (uring.CQEntry, error) {
-	return q.getQueue().Syscall(opts, ptrs...)
+	return q.Complete(opts)
 }
 
-// Complete waits for completion of the sqe with one of the shards.
-func (q *Queue) Complete(f func(*uring.SQEntry)) (uring.CQEntry, error) {
-	return q.getQueue().Complete(f)
+// Complete waits for completion of the sqe with one of the shards. Complete is safe to uuse as is only if pointers that are used in SQEntry are not allocated on heap or there are not pointers, like in Close operation.
+// If unsure always use Syscall.
+func (q *Queue) Complete(opts func(*uring.SQEntry)) (uring.CQEntry, error) {
+	return q.getQueue().Complete(opts)
 }
 
 // CompleteAsync returns future for waiting of the sqe completion with one of the shards.
-func (q *Queue) CompleteAsync(f func(*uring.SQEntry)) (*Result, error) {
-	return q.getQueue().CompleteAsync(f)
+func (q *Queue) CompleteAsync(opts func(*uring.SQEntry)) (*Result, error) {
+	return q.getQueue().CompleteAsync(opts)
 }
 
-// CompleteAll completes request on each queue. Usefull for async registrations and tests.
-func (q *Queue) CompleteAll(f func(*uring.SQEntry), c func(uring.CQEntry)) error {
-	if q.queue != nil {
-		cqe, err := q.queue.Complete(f)
-		if err != nil {
-			return err
-		}
-		c(cqe)
-		return nil
-	}
-	results := make([]*Result, 0, len(q.byEventfd))
-	for _, qu := range q.byEventfd {
-		result, err := qu.CompleteAsync(f)
-		if err != nil {
-			return err
-		}
-		results = append(results, result)
-	}
-	for _, result := range results {
-		_, ok := <-result.Wait()
-		if !ok {
-			return ErrClosed
-		}
-		cqe := result.CQEntry
-		result.Dispose()
-		c(cqe)
-	}
-	return nil
-}
+// tests for Register* methods are in fixed and fs modules.
 
 // RegisterBuffers will register buffers on all rings (shards). Note that registration
 // is done with syscall, and will have to wait until rings are idle.

@@ -158,7 +158,7 @@ func (q *queue) completeAsync(sqe *uring.SQEntry) (*Result, error) {
 	q.ring.Flush()
 
 	// it is safe to unlock before enter, only if there are more sq slots available after this one was flushed.
-	// if there are no slots then the one of the goroutines will have to wait in the loop until sqe is not nil.
+	// if there are no slots then the one of the goroutines will have to wait in the loop until sqe is ready (not nil).
 
 	q.reqCond.L.Unlock()
 	_, err := q.ring.Enter(1, 0)
@@ -185,18 +185,6 @@ func (q *queue) complete(sqe *uring.SQEntry) (uring.CQEntry, error) {
 
 func (q *queue) Ring() *uring.Ring {
 	return q.ring
-}
-
-// Syscall ...
-// Do not hide this call behind interface.
-// https://github.com/golang/go/issues/16035#issuecomment-231107512.
-func (q *queue) Syscall(opts func(*uring.SQEntry), ptrs ...uintptr) (uring.CQEntry, error) {
-	sqe, err := q.prepare()
-	if err != nil {
-		return uring.CQEntry{}, err
-	}
-	opts(sqe)
-	return q.complete(sqe)
 }
 
 // Complete blocks until an available submission exists, submits and blocks until completed.

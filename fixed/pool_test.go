@@ -30,11 +30,11 @@ func TestWrite(t *testing.T) {
 		for i := 0; i < n; i++ {
 			buf := pool.Get()
 			defer pool.Put(buf)
-			require.NoError(t, queue.CompleteAll(func(sqe *uring.SQEntry) {
+			cqe, err := queue.Complete(func(sqe *uring.SQEntry) {
 				uring.WriteFixed(sqe, f.Fd(), buf.Base(), buf.Len(), 0, 0, buf.Index())
-			}, func(cqe uring.CQEntry) {
-				require.Equal(t, int32(10), cqe.Result(), syscall.Errno(-cqe.Result()))
-			}))
+			})
+			require.NoError(t, err)
+			require.Equal(t, int32(10), cqe.Result(), syscall.Errno(-cqe.Result()))
 		}
 	}
 	// run it couple of times to test that buffers are reused correctly
