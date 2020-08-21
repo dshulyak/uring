@@ -253,7 +253,7 @@ func BenchmarkWriteAt(b *testing.B) {
 }
 
 func BenchmarkReadAt(b *testing.B) {
-	for _, size := range []int64{4 << 10, 8 << 10, 16 << 10, 64 << 10, 256 << 10, 1 << 20} {
+	for _, size := range []int64{512, 4 << 10, 8 << 10, 16 << 10, 64 << 10, 256 << 10, 1 << 20} {
 		b.Run(fmt.Sprintf("uring sharded rr %d", size), func(b *testing.B) {
 			q, err := queue.Setup(
 				2048,
