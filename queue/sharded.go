@@ -37,7 +37,7 @@ const (
 
 func defaultParams() *Params {
 	return &Params{
-		Shards:           uint(runtime.GOMAXPROCS(0)),
+		Shards:           uint(runtime.NumCPU()),
 		ShardingStrategy: ShardingThreadID,
 		WaitMethod:       WaitEventfd,
 		Flags:            FlagSharedWorkers,
@@ -55,8 +55,8 @@ type Params struct {
 // Queue ...
 type Queue struct {
 	qparams *Params
-	// fields are relevant only if sharding is enabled.
-	shards    []int32
+	// fields are used only if sharding is enabled.
+	queues    []*queue
 	n         uint64
 	byEventfd map[int32]*queue
 	poll      *poll
@@ -74,7 +74,7 @@ func Setup(size uint, params *uring.IOUringParams, qp *Params) (*Queue, error) {
 	if qp == nil {
 		qp = defaultParams()
 	}
-	if qp.Shards > 1 && qp.WaitMethod != WaitEventfd {
+	if qp.Shards > 1 && !(qp.WaitMethod == WaitEventfd || qp.WaitMethod == WaitEnter) {
 		return nil, errors.New("completions can be reaped only by waiting on eventfd if sharding is enabled")
 	}
 	q := &Queue{qparams: qp}
@@ -134,33 +134,37 @@ func setupSharded(q *Queue, size uint, params *uring.IOUringParams) (err error) 
 		}
 		queues[i] = newQueue(ring, q.qparams)
 	}
+	q.queues = queues
+	q.n = uint64(q.qparams.Shards)
 
-	byEventfd := make(map[int32]*queue, len(queues))
-	shardsList := make([]int32, len(queues))
-	for i, qu := range queues {
-		ring := qu.Ring()
-		for {
-			err = ring.SetupEventfd()
-			if err != nil {
-				if err == syscall.EINTR {
-					continue
+	if q.qparams.WaitMethod == WaitEventfd {
+		byEventfd := make(map[int32]*queue, len(queues))
+		for _, qu := range queues {
+			ring := qu.Ring()
+			for {
+				err = ring.SetupEventfd()
+				if err != nil {
+					if err == syscall.EINTR {
+						continue
+					}
+					return
 				}
+				break
+			}
+			err = q.poll.addRead(int32(ring.Eventfd()))
+			if err != nil {
 				return
 			}
-			break
+			byEventfd[int32(ring.Eventfd())] = qu
 		}
-		shardsList[i] = int32(ring.Eventfd())
-		err = q.poll.addRead(int32(ring.Eventfd()))
-		if err != nil {
-			return
+		q.byEventfd = byEventfd
+		q.wg.Add(1)
+		go q.epollLoop()
+	} else {
+		for _, qu := range queues {
+			qu.startCompletionLoop()
 		}
-		byEventfd[int32(ring.Eventfd())] = qu
 	}
-	q.shards = shardsList
-	q.n = uint64(q.qparams.Shards)
-	q.byEventfd = byEventfd
-	q.wg.Add(1)
-	go q.epollLoop()
 	return
 }
 
@@ -188,8 +192,8 @@ func (q *Queue) getQueue() *queue {
 		return q.queue
 	}
 	// TODO get rid of this condition
-	if len(q.shards) == 1 {
-		return q.byEventfd[q.shards[0]]
+	if len(q.queues) == 1 {
+		return q.queues[0]
 	}
 	var tid uint64
 	if q.qparams.ShardingStrategy == ShardingThreadID {
@@ -199,8 +203,7 @@ func (q *Queue) getQueue() *queue {
 	} else {
 		panic("sharded queue must use ShardingThreadID or ShardingRoundRobin")
 	}
-	shard := tid % q.n
-	return q.byEventfd[q.shards[shard]]
+	return q.queues[tid%q.n]
 }
 
 //go:uintptrescapes

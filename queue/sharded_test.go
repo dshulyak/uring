@@ -1,6 +1,7 @@
 package queue
 
 import (
+	"runtime"
 	"sync"
 	"testing"
 
@@ -55,6 +56,15 @@ func TestQueue(t *testing.T) {
 	t.Run("simple enter", func(t *testing.T) {
 		q, err := Setup(1024, nil, &Params{
 			WaitMethod: WaitEnter,
+		})
+		require.NoError(t, err)
+		tester(t, q)
+	})
+	t.Run("sharded enter", func(t *testing.T) {
+		q, err := Setup(1024, nil, &Params{
+			Shards:           uint(runtime.NumCPU()),
+			ShardingStrategy: ShardingThreadID,
+			WaitMethod:       WaitEnter,
 		})
 		require.NoError(t, err)
 		tester(t, q)
