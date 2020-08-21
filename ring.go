@@ -151,7 +151,7 @@ func (r *Ring) Enter(submitted uint32, minComplete uint32) (uint32, error) {
 		if minComplete > 0 || (r.params.Flags&IORING_SETUP_IOPOLL) > 0 {
 			flags |= IORING_ENTER_GETEVENTS
 		}
-		return r.enter(submitted, minComplete, flags)
+		return r.enter(submitted, minComplete, flags, true)
 	}
 	return 0, nil
 }
@@ -168,7 +168,7 @@ func (r *Ring) Submit(minComplete uint32) (uint32, error) {
 func (r *Ring) GetCQEntry(minComplete uint32) (CQEntry, error) {
 	needs := r.cqNeedsEnter()
 	if needs {
-		if _, err := r.enter(0, minComplete, 0); err != nil {
+		if _, err := r.enter(0, minComplete, 0, false); err != nil {
 			return CQEntry{}, err
 		}
 	}
@@ -182,7 +182,7 @@ func (r *Ring) GetCQEntry(minComplete uint32) (CQEntry, error) {
 			break
 		}
 		if minComplete > 0 {
-			if _, err := r.enter(0, minComplete, IORING_ENTER_GETEVENTS); err != nil {
+			if _, err := r.enter(0, minComplete, IORING_ENTER_GETEVENTS, false); err != nil {
 				return CQEntry{}, err
 			}
 		}
@@ -191,8 +191,16 @@ func (r *Ring) GetCQEntry(minComplete uint32) (CQEntry, error) {
 	return CQEntry{}, syscall.EAGAIN
 }
 
-func (r *Ring) enter(submitted, minComplete, flags uint32) (uint32, error) {
-	r1, _, errno := syscall.Syscall6(IO_URING_ENTER, uintptr(r.fd), uintptr(submitted), uintptr(minComplete), uintptr(flags), 0, 0)
+func (r *Ring) enter(submitted, minComplete, flags uint32, raw bool) (uint32, error) {
+	var (
+		r1    uintptr
+		errno syscall.Errno
+	)
+	if raw {
+		r1, _, errno = syscall.RawSyscall6(IO_URING_ENTER, uintptr(r.fd), uintptr(submitted), uintptr(minComplete), uintptr(flags), 0, 0)
+	} else {
+		r1, _, errno = syscall.Syscall6(IO_URING_ENTER, uintptr(r.fd), uintptr(submitted), uintptr(minComplete), uintptr(flags), 0, 0)
+	}
 	if errno == 0 {
 		return uint32(r1), nil
 	}
