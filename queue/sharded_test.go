@@ -97,3 +97,45 @@ func TestQueue(t *testing.T) {
 		tester(t, q)
 	})
 }
+
+func BenchmarkQueue(b *testing.B) {
+	bench := func(b *testing.B, q *Queue) {
+		b.Cleanup(func() { q.Close() })
+		var wg sync.WaitGroup
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_, err := q.Syscall(func(sqe *uring.SQEntry) {
+					uring.Nop(sqe)
+				})
+				if err != nil {
+					b.Error(err)
+				}
+			}()
+		}
+		wg.Wait()
+	}
+	b.Run("sharded default", func(b *testing.B) {
+		q, err := Setup(128, &uring.IOUringParams{
+			CQEntries: 4 * 4096,
+			Flags:     uring.IORING_SETUP_CQSIZE,
+		}, nil)
+		require.NoError(b, err)
+		bench(b, q)
+	})
+	b.Run("sharded enter", func(b *testing.B) {
+		q, err := Setup(128, &uring.IOUringParams{
+			CQEntries: 4 * 4096,
+			Flags:     uring.IORING_SETUP_CQSIZE,
+		}, &Params{
+			Shards:           uint(runtime.NumCPU()),
+			ShardingStrategy: ShardingThreadID,
+			WaitMethod:       WaitEnter,
+			Flags:            FlagSharedWorkers,
+		})
+		require.NoError(b, err)
+		bench(b, q)
+	})
+}
