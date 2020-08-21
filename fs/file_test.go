@@ -253,7 +253,7 @@ func BenchmarkWriteAt(b *testing.B) {
 }
 
 func BenchmarkReadAt(b *testing.B) {
-	for _, size := range []int64{8 << 10, 256 << 10, 1 << 20} {
+	for _, size := range []int64{4 << 10, 8 << 10, 16 << 10, 64 << 10, 256 << 10, 1 << 20} {
 		b.Run(fmt.Sprintf("uring sharded rr %d", size), func(b *testing.B) {
 			q, err := queue.Setup(
 				2048,
@@ -283,6 +283,21 @@ func BenchmarkReadAt(b *testing.B) {
 					ShardingStrategy: queue.ShardingRoundRobin,
 					WaitMethod:       queue.WaitEnter,
 					Flags:            queue.FlagSharedWorkers,
+				},
+			)
+			require.NoError(b, err)
+			benchmarkReadAt(b, q, size)
+		})
+		b.Run(fmt.Sprintf("uring eventfd %d", size), func(b *testing.B) {
+			q, err := queue.Setup(
+				4096,
+				&uring.IOUringParams{
+					CQEntries: 4 * 4096,
+					Flags:     uring.IORING_SETUP_CQSIZE,
+				},
+				&queue.Params{
+					Shards:     1,
+					WaitMethod: queue.WaitEventfd,
 				},
 			)
 			require.NoError(b, err)

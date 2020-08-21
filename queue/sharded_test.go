@@ -60,6 +60,14 @@ func TestQueue(t *testing.T) {
 		require.NoError(t, err)
 		tester(t, q)
 	})
+	t.Run("simple eventfd", func(t *testing.T) {
+		q, err := Setup(1024, nil, &Params{
+			Shards:     1,
+			WaitMethod: WaitEventfd,
+		})
+		require.NoError(t, err)
+		tester(t, q)
+	})
 	t.Run("sharded enter", func(t *testing.T) {
 		q, err := Setup(1024, nil, &Params{
 			Shards:           uint(runtime.NumCPU()),

@@ -79,7 +79,7 @@ func Setup(size uint, params *uring.IOUringParams, qp *Params) (*Queue, error) {
 		return nil, errors.New("completions can be reaped only by waiting on eventfd if sharding is enabled")
 	}
 	q := &Queue{qparams: qp}
-	if qp.Shards > 1 {
+	if qp.Shards > 0 {
 		return q, setupSharded(q, size, params)
 	}
 	return q, setupSimple(q, size, params)
@@ -146,10 +146,10 @@ func setupSharded(q *Queue, size uint, params *uring.IOUringParams) (err error) 
 			for {
 				err = ring.SetupEventfd()
 				if err != nil {
-					err = fmt.Errorf("failed to setup eventfd", err)
 					if err == syscall.EINTR {
 						continue
 					}
+					err = fmt.Errorf("failed to setup eventfd %w", err)
 					return
 				}
 				break
