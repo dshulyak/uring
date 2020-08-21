@@ -119,7 +119,7 @@ func BenchmarkQueue(b *testing.B) {
 	}
 	b.Run("sharded default", func(b *testing.B) {
 		q, err := Setup(128, &uring.IOUringParams{
-			CQEntries: 4 * 4096,
+			CQEntries: 2 * 4096,
 			Flags:     uring.IORING_SETUP_CQSIZE,
 		}, nil)
 		require.NoError(b, err)
@@ -127,7 +127,7 @@ func BenchmarkQueue(b *testing.B) {
 	})
 	b.Run("sharded enter", func(b *testing.B) {
 		q, err := Setup(128, &uring.IOUringParams{
-			CQEntries: 4 * 4096,
+			CQEntries: 2 * 4096,
 			Flags:     uring.IORING_SETUP_CQSIZE,
 		}, &Params{
 			Shards:           uint(runtime.NumCPU()),

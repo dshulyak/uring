@@ -18,28 +18,16 @@ var (
 	closed uint64 = 1 << 63
 )
 
-var resultPool = sync.Pool{
-	New: func() interface{} {
-		return &Result{
-			ch: make(chan struct{}, 1),
-		}
-	},
+func newResult() *Result {
+	return &Result{
+		ch: make(chan struct{}, 1),
+	}
 }
 
 // Result is an object for sending completion notifications.
 type Result struct {
 	ch chan struct{}
 	uring.CQEntry
-}
-
-// Wait returns channel for waiting. CQEntry is valid only if channel wasn't closed.
-func (r *Result) Wait() <-chan struct{} {
-	return r.ch
-}
-
-// Dispose puts Result back to the reusable pool.
-func (r *Result) Dispose() {
-	resultPool.Put(r)
 }
 
 func newQueue(ring *uring.Ring, qp *Params) *queue {
@@ -51,10 +39,14 @@ func newQueue(ring *uring.Ring, qp *Params) *queue {
 	if qp.WaitMethod == WaitEnter {
 		minComplete = 1
 	}
+	results := make([]*Result, ring.CQSize()*2)
+	for i := range results {
+		results[i] = newResult()
+	}
 	return &queue{
 		ring:        ring,
 		reqCond:     sync.NewCond(&reqmu),
-		results:     make(map[uint64]*Result, ring.CQSize()),
+		results:     results,
 		inflight:    &inflight,
 		minComplete: minComplete,
 	}
@@ -71,7 +63,7 @@ type queue struct {
 	wg      sync.WaitGroup
 
 	rmu     sync.Mutex
-	results map[uint64]*Result
+	results []*Result
 
 	inflight *uint32
 }
@@ -92,30 +84,21 @@ func (q *queue) tryComplete() bool {
 	cqe, err := q.ring.GetCQEntry(q.minComplete)
 	// EAGAIN - if head is equal to tail of completion queue
 	if err == syscall.EAGAIN || err == syscall.EINTR {
+		//gosched is needed if q.minComplete = 0 without eventfd
 		runtime.Gosched()
 		return true
 	} else if err != nil {
 		// FIXME
 		panic(err)
 	}
-
 	if cqe.UserData()&closed > 0 {
 		return false
 	}
 
-	q.rmu.Lock()
-	req := q.results[cqe.UserData()]
-	delete(q.results, cqe.UserData())
-	q.rmu.Unlock()
-
+	req := q.results[cqe.UserData()%uint64(len(q.results))]
 	req.CQEntry = cqe
+	// this is always non-blocking
 	req.ch <- struct{}{}
-
-	if atomic.AddUint32(q.inflight, ^uint32(0)) >= q.ring.CQSize() {
-		q.reqCond.L.Lock()
-		q.reqCond.Signal()
-		q.reqCond.L.Unlock()
-	}
 	return true
 }
 
@@ -145,13 +128,13 @@ func (q *queue) prepare() (*uring.SQEntry, error) {
 	}
 }
 
-func (q *queue) completeAsync(sqe *uring.SQEntry) (*Result, error) {
-	req := resultPool.Get().(*Result)
+//go:norace
+// q.results is a free list that never changes size, race-free access to a certain
+// position covered by an algorithm.
 
-	q.rmu.Lock()
-	q.results[uint64(q.nonce)] = req
-	q.rmu.Unlock()
+func (q *queue) completeAsync(sqe *uring.SQEntry) (*Result, error) {
 	sqe.SetUserData(uint64(q.nonce))
+	req := q.results[q.nonce%uint32(len(q.results))]
 
 	q.nonce++
 
@@ -174,12 +157,16 @@ func (q *queue) complete(sqe *uring.SQEntry) (uring.CQEntry, error) {
 	if err != nil {
 		return uring.CQEntry{}, err
 	}
-	_, open := <-req.Wait()
+	_, open := <-req.ch
+	cqe := req.CQEntry
+	if atomic.AddUint32(q.inflight, ^uint32(0)) >= q.ring.CQSize() {
+		q.reqCond.L.Lock()
+		q.reqCond.Signal()
+		q.reqCond.L.Unlock()
+	}
 	if !open {
 		return uring.CQEntry{}, ErrClosed
 	}
-	cqe := req.CQEntry
-	req.Dispose()
 	return cqe, nil
 }
 
@@ -196,18 +183,6 @@ func (q *queue) Complete(f func(*uring.SQEntry)) (uring.CQEntry, error) {
 	}
 	f(sqe)
 	return q.complete(sqe)
-}
-
-// CompleteAsync blocks until an available submission exists, submits and returns future-like object.
-// Caller must ensure pointers that were used for SQEntry will remain valid until completon.
-// After request completed - caller should call result.Dispose()
-func (q *queue) CompleteAsync(f func(*uring.SQEntry)) (*Result, error) {
-	sqe, err := q.prepare()
-	if err != nil {
-		return nil, err
-	}
-	f(sqe)
-	return q.completeAsync(sqe)
 }
 
 func (q *queue) Close() error {
@@ -227,9 +202,12 @@ func (q *queue) Close() error {
 		return err
 	}
 	q.wg.Wait()
-	for nonce, req := range q.results {
+	for _, req := range q.results {
+		if req == nil {
+			continue
+		}
 		close(req.ch)
-		delete(q.results, nonce)
 	}
+	q.results = nil
 	return nil
 }

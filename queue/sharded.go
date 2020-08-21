@@ -224,11 +224,6 @@ func (q *Queue) Complete(opts func(*uring.SQEntry)) (uring.CQEntry, error) {
 	return q.getQueue().Complete(opts)
 }
 
-// CompleteAsync returns future for waiting of the sqe completion with one of the shards.
-func (q *Queue) CompleteAsync(opts func(*uring.SQEntry)) (*Result, error) {
-	return q.getQueue().CompleteAsync(opts)
-}
-
 // tests for Register* methods are in fixed and fs modules.
 
 // RegisterBuffers will register buffers on all rings (shards). Note that registration
