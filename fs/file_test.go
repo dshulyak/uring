@@ -275,7 +275,7 @@ func BenchmarkReadAt(b *testing.B) {
 			q, err := queue.Setup(
 				256,
 				&uring.IOUringParams{
-					CQEntries: 4096,
+					CQEntries: 4 * 4096,
 					Flags:     uring.IORING_SETUP_CQSIZE,
 				},
 				&queue.Params{
@@ -305,9 +305,9 @@ func BenchmarkReadAt(b *testing.B) {
 		})
 		b.Run(fmt.Sprintf("uring sharded default %d", size), func(b *testing.B) {
 			q, err := queue.Setup(
-				2048,
+				256,
 				&uring.IOUringParams{
-					CQEntries: 4096,
+					CQEntries: 8 * 4096,
 					Flags:     uring.IORING_SETUP_CQSIZE,
 				},
 				nil,
