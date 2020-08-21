@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -265,6 +266,23 @@ func BenchmarkReadAt(b *testing.B) {
 					Shards:           50,
 					ShardingStrategy: queue.ShardingRoundRobin,
 					WaitMethod:       queue.WaitEventfd,
+				},
+			)
+			require.NoError(b, err)
+			benchmarkReadAt(b, q, size)
+		})
+		b.Run(fmt.Sprintf("uring sharded enter %d", size), func(b *testing.B) {
+			q, err := queue.Setup(
+				256,
+				&uring.IOUringParams{
+					CQEntries: 4096,
+					Flags:     uring.IORING_SETUP_CQSIZE,
+				},
+				&queue.Params{
+					Shards:           uint(runtime.NumCPU()),
+					ShardingStrategy: queue.ShardingRoundRobin,
+					WaitMethod:       queue.WaitEnter,
+					Flags:            queue.FlagSharedWorkers,
 				},
 			)
 			require.NoError(b, err)
