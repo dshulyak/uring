@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"unsafe"
 
 	"github.com/dshulyak/uring"
 	"github.com/dshulyak/uring/fixed"
@@ -17,6 +18,22 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
 )
+
+func aligned(bsize int) []byte {
+	if bsize == 0 {
+		return nil
+	}
+	if bsize%512 != 0 {
+		panic("block size must be multiple of 512")
+	}
+	block := make([]byte, bsize+512)
+	a := uintptr(unsafe.Pointer(&block[0])) & uintptr(511)
+	var offset uintptr
+	if a != 0 {
+		offset = 512 - a
+	}
+	return block[offset:]
+}
 
 func TestFixedBuffersIO(t *testing.T) {
 	tester := func(t *testing.T, fsm *Filesystem, pool *fixed.Pool) {
@@ -120,11 +137,14 @@ func benchmarkOSWriteAt(b *testing.B, size int64, fflags int) {
 func benchmarkOSReadAt(b *testing.B, size int64) {
 	f, err := ioutil.TempFile("", "testing-write-os-")
 	require.NoError(b, err)
+	require.NoError(b, f.Close())
 	b.Cleanup(func() {
 		os.Remove(f.Name())
 	})
+	f, err = os.OpenFile(f.Name(), os.O_RDWR|unix.O_DIRECT, 0644)
+	require.NoError(b, err)
 
-	buf := make([]byte, size)
+	buf := aligned(int(size))
 	offset := int64(0)
 
 	for i := 0; i < b.N; i++ {
@@ -333,14 +353,14 @@ func benchmarkReadAt(b *testing.B, q *queue.Queue, size int64) {
 
 	fsm := NewFilesystem(q)
 
-	f, err := TempFile(fsm, "testing-fs-file-", 0)
+	f, err := TempFile(fsm, "testing-fs-file-", unix.O_DIRECT)
 	require.NoError(b, err)
 	b.Cleanup(func() {
 		os.Remove(f.Name())
 	})
 
 	offset := int64(0)
-	buf := make([]byte, size)
+	buf := aligned(int(size))
 	for i := 0; i < b.N; i++ {
 		_, err := f.WriteAt(buf, int64(i)*size)
 		require.NoError(b, err)
