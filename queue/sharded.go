@@ -2,6 +2,7 @@ package queue
 
 import (
 	"errors"
+	"fmt"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -130,6 +131,7 @@ func setupSharded(q *Queue, size uint, params *uring.IOUringParams) (err error) 
 		}
 		ring, err = uring.Setup(size, &use)
 		if err != nil {
+			err = fmt.Errorf("failed to setup ring %w", err)
 			return
 		}
 		queues[i] = newQueue(ring, q.qparams)
@@ -144,6 +146,7 @@ func setupSharded(q *Queue, size uint, params *uring.IOUringParams) (err error) 
 			for {
 				err = ring.SetupEventfd()
 				if err != nil {
+					err = fmt.Errorf("failed to setup eventfd", err)
 					if err == syscall.EINTR {
 						continue
 					}

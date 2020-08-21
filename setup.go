@@ -1,6 +1,7 @@
 package uring
 
 import (
+	"fmt"
 	"syscall"
 	"unsafe"
 )
@@ -24,7 +25,7 @@ func Setup(size uint, params *IOUringParams) (*Ring, error) {
 func setup(ring *Ring, size uint, p *IOUringParams) error {
 	fd, _, errno := syscall.Syscall(IO_URING_SETUP, uintptr(size), uintptr(unsafe.Pointer(p)), 0)
 	if errno != 0 {
-		return error(errno)
+		return fmt.Errorf("IO_URING_SETUP %w", error(errno))
 	}
 	ring.fd = int(fd)
 
