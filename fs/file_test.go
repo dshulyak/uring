@@ -391,9 +391,13 @@ func benchmarkReadAt(b *testing.B, q *queue.Queue, size int64) {
 		os.Remove(f.Name())
 	})
 
+	total := 0
 	wbuf := aligned(int(size) * (b.N + 1))
-	_, err = f.WriteAt(wbuf, 0)
-	require.NoError(b, err)
+	for total != len(wbuf) {
+		n, err := f.WriteAt(wbuf[total:], int64(total))
+		require.NoError(b, err)
+		total += n
+	}
 
 	offset := int64(0)
 	buf := aligned(int(size))
@@ -412,9 +416,13 @@ func benchmarkReadAt(b *testing.B, q *queue.Queue, size int64) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := f.ReadAt(buf, atomic.AddInt64(&offset, size)-size)
+			off := atomic.AddInt64(&offset, size) - size
+			n, err := f.ReadAt(buf, off)
 			if err != nil {
 				b.Error(err)
+			}
+			if n != int(size) {
+				b.Errorf("short read %v off %v", n, off)
 			}
 		}()
 	}
