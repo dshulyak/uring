@@ -98,6 +98,57 @@ func TestQueue(t *testing.T) {
 	})
 }
 
+func TestBatch(t *testing.T) {
+	tester := func(t *testing.T, q *Queue) {
+		t.Cleanup(func() {
+			q.Close()
+		})
+		iter := 10000
+		size := 4
+		var wg sync.WaitGroup
+		results := make(chan uring.CQEntry, iter*size)
+		for i := 0; i < iter; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				batch := make([]SQOperation, size)
+				for i := range batch {
+					batch[i] = uring.Nop
+				}
+				cqes, err := q.BatchSyscall(nil, batch)
+				if !assert.NoError(t, err) {
+					return
+				}
+				for _, cqe := range cqes {
+					results <- cqe
+				}
+			}()
+		}
+		wg.Wait()
+		close(results)
+		count := 0
+		for _ = range results {
+			count++
+		}
+		require.Equal(t, count, iter*size)
+	}
+
+	t.Run("default", func(t *testing.T) {
+		q, err := Setup(1024, nil, nil)
+		require.NoError(t, err)
+		tester(t, q)
+	})
+	t.Run("sharded enter", func(t *testing.T) {
+		q, err := Setup(1024, nil, &Params{
+			Shards:           uint(runtime.NumCPU()),
+			ShardingStrategy: ShardingThreadID,
+			WaitMethod:       WaitEnter,
+		})
+		require.NoError(t, err)
+		tester(t, q)
+	})
+}
+
 func BenchmarkQueue(b *testing.B) {
 	bench := func(b *testing.B, q *Queue) {
 		b.Cleanup(func() { q.Close() })
@@ -137,5 +188,51 @@ func BenchmarkQueue(b *testing.B) {
 		})
 		require.NoError(b, err)
 		bench(b, q)
+	})
+}
+
+func BenchmarkBatch(b *testing.B) {
+	bench := func(b *testing.B, q *Queue, size int) {
+		b.Cleanup(func() { q.Close() })
+		var wg sync.WaitGroup
+		b.ResetTimer()
+
+		for i := 0; i < b.N/size; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				cqes := make([]uring.CQEntry, 0, size)
+				batch := make([]SQOperation, size)
+				for i := range batch {
+					batch[i] = uring.Nop
+				}
+				_, err := q.BatchSyscall(cqes, batch)
+				if err != nil {
+					b.Error(err)
+				}
+			}()
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			cqes := make([]uring.CQEntry, 0, b.N%size)
+			batch := make([]SQOperation, b.N%size)
+			for i := range batch {
+				batch[i] = uring.Nop
+			}
+			_, err := q.BatchSyscall(cqes, batch)
+			if err != nil {
+				b.Error(err)
+			}
+		}()
+		wg.Wait()
+	}
+	b.Run("default 16", func(b *testing.B) {
+		q, err := Setup(128, &uring.IOUringParams{
+			CQEntries: 2 * 4096,
+			Flags:     uring.IORING_SETUP_CQSIZE,
+		}, nil)
+		require.NoError(b, err)
+		bench(b, q, 16)
 	})
 }

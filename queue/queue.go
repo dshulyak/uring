@@ -32,6 +32,8 @@ type result struct {
 	free bool
 }
 
+type SQOperation func(sqe *uring.SQEntry)
+
 func newQueue(ring *uring.Ring, qp *Params) *queue {
 	var (
 		minComplete uint32
@@ -103,26 +105,40 @@ func (q *queue) tryComplete() bool {
 	return true
 }
 
-func (q *queue) prepare() (*uring.SQEntry, error) {
+// prepare acquires submission lock and registers n inflights operations.
+func (q *queue) prepare(n uint32) error {
 	q.mu.Lock()
 	if q.closed {
 		q.mu.Unlock()
-		return nil, ErrClosed
+		return ErrClosed
 	}
-	inflight := atomic.AddUint32(&q.inflight, 1)
+	inflight := atomic.AddUint32(&q.inflight, n)
 	if inflight > q.limit {
 		<-q.signal
 		if q.closed {
 			q.mu.Unlock()
-			return nil, ErrClosed
+			return ErrClosed
 		}
 	}
+	return nil
+}
+
+func (q *queue) getSQEntry() *uring.SQEntry {
+	// in general sq entry will be available without looping
+	// but in case of SQPOLL we may need to wait here
 	for {
 		entry := q.ring.GetSQEntry()
 		if entry != nil {
-			return entry, nil
+			return entry
 		}
 		runtime.Gosched()
+	}
+}
+
+// completed must be called after all n completions were reaped and results are not needed.
+func (q *queue) completed(n uint32) {
+	if atomic.AddUint32(&q.inflight, ^uint32(n-1)) == q.limit {
+		q.signal <- struct{}{}
 	}
 }
 
@@ -137,37 +153,39 @@ func (q *queue) prepare() (*uring.SQEntry, error) {
 // but for it to happen we need to have submission that can take longer to complete
 // then all other submissions in the queue.
 
-func (q *queue) complete(sqe *uring.SQEntry) (uring.CQEntry, error) {
-	var req *result
+func (q *queue) fillResult(sqe *uring.SQEntry) *result {
+	var res *result
 	for {
-		req = q.results[q.nonce%uint32(len(q.results))]
-		if req.free {
+		res = q.results[q.nonce%uint32(len(q.results))]
+		if res.free {
 			break
 		}
 		q.nonce++
 	}
-	req.free = false
-
+	res.free = false
 	sqe.SetUserData(uint64(q.nonce))
 	q.nonce++
+	return res
+}
+
+func (q *queue) submit(n uint32) error {
 	q.ring.Flush()
-
-	// it is safe to unlock before enter, only if there are more sq slots available after this one was flushed.
-	// if there are no slots then the one of the goroutines will have to wait in the loop until sqe is ready (not nil).
-
 	q.mu.Unlock()
+	_, err := q.ring.Enter(n, 0)
+	return err
+}
 
-	_, err := q.ring.Enter(1, 0)
-	if err != nil {
+func (q *queue) complete(sqe *uring.SQEntry) (uring.CQEntry, error) {
+	res := q.fillResult(sqe)
+
+	if err := q.submit(1); err != nil {
 		return uring.CQEntry{}, err
 	}
-	_, open := <-req.ch
-	cqe := req.CQEntry
-	req.free = true
 
-	if atomic.AddUint32(&q.inflight, ^uint32(0)) == q.limit {
-		q.signal <- struct{}{}
-	}
+	_, open := <-res.ch
+	cqe := res.CQEntry
+	res.free = true
+	q.completed(1)
 	if !open {
 		return uring.CQEntry{}, ErrClosed
 	}
@@ -180,13 +198,64 @@ func (q *queue) Ring() *uring.Ring {
 
 // Complete blocks until an available submission exists, submits and blocks until completed.
 // Goroutine that executes Complete will be parked.
-func (q *queue) Complete(f func(*uring.SQEntry)) (uring.CQEntry, error) {
-	sqe, err := q.prepare()
-	if err != nil {
+func (q *queue) Complete(opt SQOperation) (uring.CQEntry, error) {
+	// acquire lock
+	if err := q.prepare(1); err != nil {
 		return uring.CQEntry{}, err
 	}
-	f(sqe)
-	return q.complete(sqe)
+
+	// get sqe and fill it with data
+	sqe := q.getSQEntry()
+	opt(sqe)
+	res := q.fillResult(sqe)
+
+	// submit to uring
+	if err := q.submit(1); err != nil {
+		return uring.CQEntry{}, err
+	}
+
+	// wait
+	_, open := <-res.ch
+	cqe := res.CQEntry
+	res.free = true
+	q.completed(1)
+	if !open {
+		return uring.CQEntry{}, ErrClosed
+	}
+	return cqe, nil
+}
+
+// Batch submits operations atomically and in the order they are provided.
+func (q *queue) Batch(cqes []uring.CQEntry, opts []SQOperation) ([]uring.CQEntry, error) {
+	n := uint32(len(opts))
+	if err := q.prepare(n); err != nil {
+		return nil, err
+	}
+	results := make([]*result, len(opts))
+	for i := range opts {
+		sqe := q.getSQEntry()
+		opts[i](sqe)
+		results[i] = q.fillResult(sqe)
+	}
+
+	if err := q.submit(n); err != nil {
+		return nil, err
+	}
+	exit := false
+	for _, res := range results {
+		_, open := <-res.ch
+		res.free = true
+		q.completed(1)
+		if !open {
+			exit = true
+			continue
+		}
+		cqes = append(cqes, res.CQEntry)
+	}
+	if exit {
+		return nil, ErrClosed
+	}
+	return cqes, nil
 }
 
 func (q *queue) Close() error {

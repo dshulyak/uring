@@ -214,8 +214,15 @@ func (q *Queue) getQueue() *queue {
 // Syscall executes operation on one of the internal queues. Additionaly it prevents ptrs from being moved to another location while Syscall is in progress.
 // WARNING: don't use interface that hides this method.
 // https://github.com/golang/go/issues/16035#issuecomment-231107512.
-func (q *Queue) Syscall(opts func(*uring.SQEntry), ptrs ...uintptr) (uring.CQEntry, error) {
-	return q.getQueue().Complete(opts)
+func (q *Queue) Syscall(opt SQOperation, ptrs ...uintptr) (uring.CQEntry, error) {
+	return q.getQueue().Complete(opt)
+}
+
+//go:uintptrescapes
+
+// BatchSyscall ...
+func (q *Queue) BatchSyscall(cqes []uring.CQEntry, opts []SQOperation, ptrs ...uintptr) ([]uring.CQEntry, error) {
+	return q.getQueue().Batch(cqes, opts)
 }
 
 // tests for Register* methods are in fixed and fs modules.
