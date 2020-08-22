@@ -18,15 +18,15 @@ var (
 	closed uint64 = 1 << 63
 )
 
-func newResult() *Result {
-	return &Result{
-		ch:   make(chan struct{}),
+func newResult() *result {
+	return &result{
+		ch:   make(chan struct{}, 1),
 		free: true,
 	}
 }
 
-// Result is an object for sending completion notifications.
-type Result struct {
+// result is an object for sending completion notifications.
+type result struct {
 	uring.CQEntry
 	ch   chan struct{}
 	free bool
@@ -39,7 +39,7 @@ func newQueue(ring *uring.Ring, qp *Params) *queue {
 	if qp.WaitMethod == WaitEnter {
 		minComplete = 1
 	}
-	results := make([]*Result, ring.CQSize()*2)
+	results := make([]*result, ring.CQSize()*2)
 	for i := range results {
 		results[i] = newResult()
 	}
@@ -65,7 +65,7 @@ type queue struct {
 
 	wg sync.WaitGroup
 
-	results []*Result
+	results []*result
 
 	inflight, limit uint32
 }
@@ -130,15 +130,15 @@ func (q *queue) prepare() (*uring.SQEntry, error) {
 // norace is for results, results is a free-list with a static size,
 // it is twice as large as a cq. we provide a guarantee that no more
 // than cq size of entries are inflight at the same time, it means that any
-// particular Result will be reused only after cq entries were completed.
+// particular result will be reused only after cq entries were completed.
 // if it happens that some submissions are stuck in the queue, then we need
-// associated Result.
+// associated result.
 // In the worst case performance of the results free-list will o(n),
 // but for it to happen we need to have submission that can take longer to complete
 // then all other submissions in the queue.
 
 func (q *queue) complete(sqe *uring.SQEntry) (uring.CQEntry, error) {
-	var req *Result
+	var req *result
 	for {
 		req = q.results[q.nonce%uint32(len(q.results))]
 		if req.free {
