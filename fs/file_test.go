@@ -33,7 +33,7 @@ func aligned(bsize int) []byte {
 	if a != 0 {
 		offset = 512 - a
 	}
-	return block[offset:]
+	return block[offset : int(offset)+bsize]
 }
 
 func TestFixedBuffersIO(t *testing.T) {
