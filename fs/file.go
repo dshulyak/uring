@@ -51,7 +51,7 @@ func (f *File) Close() error {
 	if f.fixedFiles != nil {
 		_ = f.fixedFiles.unregister(f.ufd)
 	}
-	cqe, err := f.queue.Complete(func(sqe *uring.SQEntry) {
+	cqe, err := f.queue.Syscall(func(sqe *uring.SQEntry) {
 		uring.Close(sqe, f.fd)
 	})
 	if err != nil {
@@ -92,7 +92,7 @@ func (f *File) WriteAtFixed(b *fixed.Buffer, off int64) (int, error) {
 	if b.Len() == 0 {
 		return 0, nil
 	}
-	return ioRst(f.queue.Complete(func(sqe *uring.SQEntry) {
+	return ioRst(f.queue.Syscall(func(sqe *uring.SQEntry) {
 		uring.WriteFixed(sqe, f.ufd, b.Base(), b.Len(), uint64(off), 0, b.Index())
 		sqe.SetFlags(f.flags)
 	}))
@@ -103,7 +103,7 @@ func (f *File) ReadAtFixed(b *fixed.Buffer, off int64) (int, error) {
 	if b.Len() == 0 {
 		return 0, nil
 	}
-	return ioRst(f.queue.Complete(func(sqe *uring.SQEntry) {
+	return ioRst(f.queue.Syscall(func(sqe *uring.SQEntry) {
 		uring.ReadFixed(sqe, f.ufd, b.Base(), b.Len(), uint64(off), 0, b.Index())
 		sqe.SetFlags(f.flags)
 	}))
@@ -112,7 +112,7 @@ func (f *File) ReadAtFixed(b *fixed.Buffer, off int64) (int, error) {
 
 // Sync ...
 func (f *File) Sync() error {
-	cqe, err := f.queue.Complete(func(sqe *uring.SQEntry) {
+	cqe, err := f.queue.Syscall(func(sqe *uring.SQEntry) {
 		uring.Fsync(sqe, f.fd)
 	})
 	if err != nil {
@@ -126,7 +126,7 @@ func (f *File) Sync() error {
 
 // Datasync ...
 func (f *File) Datasync() error {
-	cqe, err := f.queue.Complete(func(sqe *uring.SQEntry) {
+	cqe, err := f.queue.Syscall(func(sqe *uring.SQEntry) {
 		uring.Fdatasync(sqe, f.fd)
 	})
 	if err != nil {

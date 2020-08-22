@@ -22,7 +22,7 @@ func TestQueue(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				for j := 0; j < 100; j++ {
-					cqe, err := q.Complete(func(sqe *uring.SQEntry) {
+					cqe, err := q.Syscall(func(sqe *uring.SQEntry) {
 						uring.Nop(sqe)
 					})
 					if !assert.NoError(t, err) {

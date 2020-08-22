@@ -211,16 +211,10 @@ func (q *Queue) getQueue() *queue {
 
 //go:uintptrescapes
 
-// Syscall is a helper to lock pointers that are sent to uring in place. Otherwise this is identical to Complete.
+// Syscall executes operation on one of the internal queues. Additionaly it prevents ptrs from being moved to another location while Syscall is in progress.
 // WARNING: don't use interface that hides this method.
 // https://github.com/golang/go/issues/16035#issuecomment-231107512.
 func (q *Queue) Syscall(opts func(*uring.SQEntry), ptrs ...uintptr) (uring.CQEntry, error) {
-	return q.Complete(opts)
-}
-
-// Complete waits for completion of the sqe with one of the shards. Complete is safe to uuse as is only if pointers that are used in SQEntry are not allocated on heap or there are not pointers, like in Close operation.
-// If unsure always use Syscall.
-func (q *Queue) Complete(opts func(*uring.SQEntry)) (uring.CQEntry, error) {
 	return q.getQueue().Complete(opts)
 }
 
