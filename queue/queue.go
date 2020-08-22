@@ -20,7 +20,7 @@ var (
 
 func newResult() *Result {
 	return &Result{
-		ch:   make(chan struct{}, 1),
+		ch:   make(chan struct{}),
 		free: true,
 	}
 }
@@ -99,7 +99,6 @@ func (q *queue) tryComplete() bool {
 
 	req := q.results[cqe.UserData()%uint64(len(q.results))]
 	req.CQEntry = cqe
-	// this is always non-blocking
 	req.ch <- struct{}{}
 	return true
 }
