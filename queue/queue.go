@@ -34,8 +34,6 @@ type Result struct {
 
 func newQueue(ring *uring.Ring, qp *Params) *queue {
 	var (
-		inflight    uint32
-		reqmu       sync.Mutex
 		minComplete uint32
 	)
 	if qp.WaitMethod == WaitEnter {
@@ -47,9 +45,9 @@ func newQueue(ring *uring.Ring, qp *Params) *queue {
 	}
 	return &queue{
 		ring:        ring,
-		reqCond:     sync.NewCond(&reqmu),
+		signal:      make(chan struct{}, 1),
 		results:     results,
-		inflight:    &inflight,
+		limit:       ring.CQSize(),
 		minComplete: minComplete,
 	}
 }
@@ -59,15 +57,17 @@ type queue struct {
 	ring        *uring.Ring
 	minComplete uint32
 
-	reqCond *sync.Cond
-	nonce   uint32
-	closed  bool
-	wg      sync.WaitGroup
+	mu     sync.Mutex
+	nonce  uint32
+	closed bool
 
-	rmu     sync.Mutex
+	signal chan struct{}
+
+	wg sync.WaitGroup
+
 	results []*Result
 
-	inflight *uint32
+	inflight, limit uint32
 }
 
 func (q *queue) startCompletionLoop() {
@@ -104,22 +104,19 @@ func (q *queue) tryComplete() bool {
 }
 
 func (q *queue) prepare() (*uring.SQEntry, error) {
-	q.reqCond.L.Lock()
+	q.mu.Lock()
 	if q.closed {
-		q.reqCond.L.Unlock()
+		q.mu.Unlock()
 		return nil, ErrClosed
 	}
-	inflight := atomic.AddUint32(q.inflight, 1)
-	if inflight > q.ring.CQSize() {
-		q.reqCond.Wait()
+	inflight := atomic.AddUint32(&q.inflight, 1)
+	if inflight > q.limit {
+		<-q.signal
 		if q.closed {
-			q.reqCond.L.Unlock()
+			q.mu.Unlock()
 			return nil, ErrClosed
 		}
 	}
-	// with sqpoll we cannot rely on mutex that guards Enter
-	// if it happens that all sqe's were filled but sq polling thread didn't
-	// update the head yet - program will crash
 	for {
 		entry := q.ring.GetSQEntry()
 		if entry != nil {
@@ -140,7 +137,7 @@ func (q *queue) prepare() (*uring.SQEntry, error) {
 // but for it to happen we need to have submission that can take longer to complete
 // then all other submissions in the queue.
 
-func (q *queue) completeAsync(sqe *uring.SQEntry) (*Result, error) {
+func (q *queue) complete(sqe *uring.SQEntry) (uring.CQEntry, error) {
 	var req *Result
 	for {
 		req = q.results[q.nonce%uint32(len(q.results))]
@@ -158,27 +155,18 @@ func (q *queue) completeAsync(sqe *uring.SQEntry) (*Result, error) {
 	// it is safe to unlock before enter, only if there are more sq slots available after this one was flushed.
 	// if there are no slots then the one of the goroutines will have to wait in the loop until sqe is ready (not nil).
 
-	q.reqCond.L.Unlock()
+	q.mu.Unlock()
+
 	_, err := q.ring.Enter(1, 0)
-
-	if err != nil {
-		return nil, err
-	}
-	return req, nil
-}
-
-func (q *queue) complete(sqe *uring.SQEntry) (uring.CQEntry, error) {
-	req, err := q.completeAsync(sqe)
 	if err != nil {
 		return uring.CQEntry{}, err
 	}
 	_, open := <-req.ch
 	cqe := req.CQEntry
 	req.free = true
-	if atomic.AddUint32(q.inflight, ^uint32(0)) >= q.ring.CQSize() {
-		q.reqCond.L.Lock()
-		q.reqCond.Signal()
-		q.reqCond.L.Unlock()
+
+	if atomic.AddUint32(&q.inflight, ^uint32(0)) == q.limit {
+		q.signal <- struct{}{}
 	}
 	if !open {
 		return uring.CQEntry{}, ErrClosed
@@ -202,10 +190,10 @@ func (q *queue) Complete(f func(*uring.SQEntry)) (uring.CQEntry, error) {
 }
 
 func (q *queue) Close() error {
-	q.reqCond.L.Lock()
+	q.mu.Lock()
 	q.closed = true
-	q.reqCond.Broadcast()
-	q.reqCond.L.Unlock()
+	q.mu.Unlock()
+	close(q.signal)
 
 	sqe := q.ring.GetSQEntry()
 	uring.Nop(sqe)
@@ -219,9 +207,6 @@ func (q *queue) Close() error {
 	}
 	q.wg.Wait()
 	for _, req := range q.results {
-		if req == nil {
-			continue
-		}
 		close(req.ch)
 	}
 	q.results = nil
