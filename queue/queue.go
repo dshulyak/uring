@@ -20,14 +20,16 @@ var (
 
 func newResult() *Result {
 	return &Result{
-		ch: make(chan struct{}, 1),
+		ch:   make(chan struct{}, 1),
+		free: true,
 	}
 }
 
 // Result is an object for sending completion notifications.
 type Result struct {
-	ch chan struct{}
 	uring.CQEntry
+	ch   chan struct{}
+	free bool
 }
 
 func newQueue(ring *uring.Ring, qp *Params) *queue {
@@ -129,15 +131,29 @@ func (q *queue) prepare() (*uring.SQEntry, error) {
 }
 
 //go:norace
-// q.results is a free list that never changes size, race-free access to a certain
-// position covered by an algorithm.
+// norace is for results, results is a free-list with a static size,
+// it is twice as large as a cq. we provide a guarantee that no more
+// than cq size of entries are inflight at the same time, it means that any
+// particular Result will be reused only after cq entries were completed.
+// if it happens that some submissions are stuck in the queue, then we need
+// associated Result.
+// In the worst case performance of the results free-list will o(n),
+// but for it to happen we need to have submission that can take longer to complete
+// then all other submissions in the queue.
 
 func (q *queue) completeAsync(sqe *uring.SQEntry) (*Result, error) {
+	var req *Result
+	for {
+		req = q.results[q.nonce%uint32(len(q.results))]
+		if req.free {
+			break
+		}
+		q.nonce++
+	}
+	req.free = false
+
 	sqe.SetUserData(uint64(q.nonce))
-	req := q.results[q.nonce%uint32(len(q.results))]
-
 	q.nonce++
-
 	q.ring.Flush()
 
 	// it is safe to unlock before enter, only if there are more sq slots available after this one was flushed.
@@ -159,6 +175,7 @@ func (q *queue) complete(sqe *uring.SQEntry) (uring.CQEntry, error) {
 	}
 	_, open := <-req.ch
 	cqe := req.CQEntry
+	req.free = true
 	if atomic.AddUint32(q.inflight, ^uint32(0)) >= q.ring.CQSize() {
 		q.reqCond.L.Lock()
 		q.reqCond.Signal()
