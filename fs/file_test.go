@@ -148,10 +148,9 @@ func benchmarkOSReadAt(b *testing.B, size int64) {
 	buf := aligned(int(size))
 	offset := int64(0)
 
-	for i := 0; i < b.N; i++ {
-		_, err := f.WriteAt(buf, int64(i)*size)
-		require.NoError(b, err)
-	}
+	wbuf := aligned(int(size) * (b.N + 1))
+	_, err = f.WriteAt(wbuf, 0)
+	require.NoError(b, err)
 
 	b.SetBytes(size)
 	b.ReportAllocs()
@@ -305,7 +304,7 @@ func BenchmarkReadAt(b *testing.B) {
 		})
 		b.Run(fmt.Sprintf("uring sharded default %d", size), func(b *testing.B) {
 			q, err := queue.Setup(
-				256,
+				512,
 				&uring.IOUringParams{
 					CQEntries: 8 * 4096,
 					Flags:     uring.IORING_SETUP_CQSIZE,
@@ -392,12 +391,12 @@ func benchmarkReadAt(b *testing.B, q *queue.Queue, size int64) {
 		os.Remove(f.Name())
 	})
 
+	wbuf := aligned(int(size) * (b.N + 1))
+	_, err = f.WriteAt(wbuf, 0)
+	require.NoError(b, err)
+
 	offset := int64(0)
 	buf := aligned(int(size))
-	for i := 0; i < b.N; i++ {
-		_, err := f.WriteAt(buf, int64(i)*size)
-		require.NoError(b, err)
-	}
 
 	b.SetBytes(int64(size))
 	b.ReportAllocs()
