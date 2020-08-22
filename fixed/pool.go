@@ -4,10 +4,14 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"unsafe"
-
-	"github.com/dshulyak/uring/queue"
 )
+
+// BufferRegistry ...
+type BufferRegistry interface {
+	RegisterBuffers([]syscall.Iovec) error
+}
 
 var bufferPool = sync.Pool{
 	New: func() interface{} {
@@ -17,7 +21,7 @@ var bufferPool = sync.Pool{
 
 // New will initialize mmap'ed memory region, of the total size 16 bytes + size*bufsize
 // and register mmap'ed memory as buffer in io_uring.
-func New(reg *queue.Queue, bufsize, size int) (*Pool, error) {
+func New(reg BufferRegistry, bufsize, size int) (*Pool, error) {
 	alloc := &allocator{
 		max:        size,
 		bufferSize: bufsize,

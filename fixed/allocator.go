@@ -4,8 +4,6 @@ import (
 	"errors"
 	"syscall"
 	"unsafe"
-
-	"github.com/dshulyak/uring/queue"
 )
 
 var (
@@ -25,7 +23,7 @@ type allocator struct {
 	// buffers - list of buffers of the same size.
 	mem []byte
 
-	reg *queue.Queue
+	reg BufferRegistry
 }
 
 func (a *allocator) init() error {
