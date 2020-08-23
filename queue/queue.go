@@ -67,6 +67,7 @@ type queue struct {
 
 	wg sync.WaitGroup
 
+	rmu     sync.Mutex
 	results []*result
 
 	inflight, limit uint32
@@ -83,6 +84,17 @@ func (q *queue) completionLoop() {
 	for q.tryComplete() {
 	}
 }
+
+//go:norace
+// results is a free-list with a static size,
+// it is twice as large as a cq. we provide a guarantee that no more
+// than cq size of entries are inflight at the same time, it means that any
+// particular result will be reused only after cq number of entries were completed.
+// if it happens that some submissions are stuck in the queue, then we can reuse
+// associated result.
+// In the worst case performance of the results array will be O(n),
+// but for it to happen we need to have submission that can take longer to complete
+// then all other submissions in the queue cumulatively.
 
 func (q *queue) tryComplete() bool {
 	cqe, err := q.ring.GetCQEntry(q.minComplete)
@@ -142,27 +154,18 @@ func (q *queue) completed(n uint32) {
 	}
 }
 
-//go:norace
-// norace is for results, results is a free-list with a static size,
-// it is twice as large as a cq. we provide a guarantee that no more
-// than cq size of entries are inflight at the same time, it means that any
-// particular result will be reused only after cq entries were completed.
-// if it happens that some submissions are stuck in the queue, then we need
-// associated result.
-// In the worst case performance of the results free-list will o(n),
-// but for it to happen we need to have submission that can take longer to complete
-// then all other submissions in the queue.
-
 func (q *queue) fillResult(sqe *uring.SQEntry) *result {
 	var res *result
 	for {
-		res = q.results[q.nonce%uint32(len(q.results))]
+		pos := q.nonce % uint32(len(q.results))
+		res = q.results[pos]
 		if res.free {
 			break
 		}
 		q.nonce++
 	}
 	res.free = false
+
 	sqe.SetUserData(uint64(q.nonce))
 	q.nonce++
 	return res
@@ -173,23 +176,6 @@ func (q *queue) submit(n uint32) error {
 	q.mu.Unlock()
 	_, err := q.ring.Enter(n, 0)
 	return err
-}
-
-func (q *queue) complete(sqe *uring.SQEntry) (uring.CQEntry, error) {
-	res := q.fillResult(sqe)
-
-	if err := q.submit(1); err != nil {
-		return uring.CQEntry{}, err
-	}
-
-	_, open := <-res.ch
-	cqe := res.CQEntry
-	res.free = true
-	q.completed(1)
-	if !open {
-		return uring.CQEntry{}, ErrClosed
-	}
-	return cqe, nil
 }
 
 func (q *queue) Ring() *uring.Ring {

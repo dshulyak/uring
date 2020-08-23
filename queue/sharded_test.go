@@ -3,11 +3,15 @@ package queue
 import (
 	"runtime"
 	"sync"
+	"syscall"
 	"testing"
+	"time"
+	"unsafe"
 
 	"github.com/dshulyak/uring"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 )
 
 func TestQueue(t *testing.T) {
@@ -213,4 +217,30 @@ func BenchmarkBatch(b *testing.B) {
 		require.NoError(b, err)
 		bench(b, q, 16)
 	})
+}
+
+func TestTimeoutNoOverwrite(t *testing.T) {
+	q, err := Setup(2, nil, &Params{Rings: 1, WaitMethod: WaitEventfd})
+	require.NoError(t, err)
+	// we are testing here that the result we used for timeout will not be overwritten by nop.
+	// timeout operation executes long enough (10ms), for results array to wrap around
+	tchan := make(chan struct{})
+	go func() {
+		ts := unix.Timespec{Nsec: 10_000_000}
+		cqe, err := q.Syscall(func(sqe *uring.SQEntry) {
+			uring.Timeout(sqe, &ts, false, 0)
+		}, uintptr(unsafe.Pointer(&ts)))
+		require.NoError(t, err)
+		require.Equal(t, syscall.ETIME, syscall.Errno(-cqe.Result()))
+		close(tchan)
+	}()
+	for i := 0; i < 100; i++ {
+		_, err := q.Syscall(uring.Nop)
+		require.NoError(t, err)
+	}
+	select {
+	case <-tchan:
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "timed out")
+	}
 }

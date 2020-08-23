@@ -3,6 +3,8 @@ package uring
 import (
 	"syscall"
 	"unsafe"
+
+	"golang.org/x/sys/unix"
 )
 
 // Nop ...
@@ -112,4 +114,17 @@ func Recv(sqe *SQEntry, fd uintptr, buf []byte, flags uint32) {
 	sqe.SetAddr((uint64)(uintptr(unsafe.Pointer(&buf[0]))))
 	sqe.SetLen(uint32(len(buf)))
 	sqe.SetOpcodeFlags(flags)
+}
+
+// Timeout operation.
+// if abs is true then IORING_TIMEOUT_ABS will be added to timeoutFlags.
+// count is the number of events to wait.
+func Timeout(sqe *SQEntry, ts *unix.Timespec, abs bool, count uint64) {
+	sqe.SetOpcode(IORING_OP_TIMEOUT)
+	sqe.SetAddr((uint64)(uintptr(unsafe.Pointer(ts))))
+	sqe.SetLen(1)
+	if abs {
+		sqe.SetOpcodeFlags(IORING_TIMEOUT_ABS)
+	}
+	sqe.SetOffset(count)
 }
