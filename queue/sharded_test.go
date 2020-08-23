@@ -62,7 +62,7 @@ func TestQueue(t *testing.T) {
 	})
 	t.Run("simple eventfd", func(t *testing.T) {
 		q, err := Setup(1024, nil, &Params{
-			Shards:     1,
+			Rings:      1,
 			WaitMethod: WaitEventfd,
 		})
 		require.NoError(t, err)
@@ -70,7 +70,7 @@ func TestQueue(t *testing.T) {
 	})
 	t.Run("sharded enter", func(t *testing.T) {
 		q, err := Setup(1024, nil, &Params{
-			Shards:     uint(runtime.NumCPU()),
+			Rings:      runtime.NumCPU(),
 			WaitMethod: WaitEnter,
 		})
 		require.NoError(t, err)
@@ -120,7 +120,7 @@ func TestBatch(t *testing.T) {
 	})
 	t.Run("sharded enter", func(t *testing.T) {
 		q, err := Setup(1024, nil, &Params{
-			Shards:     uint(runtime.NumCPU()),
+			Rings:      runtime.NumCPU(),
 			WaitMethod: WaitEnter,
 		})
 		require.NoError(t, err)
@@ -160,7 +160,7 @@ func BenchmarkQueue(b *testing.B) {
 			CQEntries: 2 * 4096,
 			Flags:     uring.IORING_SETUP_CQSIZE,
 		}, &Params{
-			Shards:     uint(runtime.NumCPU()),
+			Rings:      runtime.NumCPU(),
 			WaitMethod: WaitEnter,
 			Flags:      FlagSharedWorkers,
 		})

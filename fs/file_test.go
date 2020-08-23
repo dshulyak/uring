@@ -226,7 +226,7 @@ func BenchmarkReadAt(b *testing.B) {
 					Flags:     uring.IORING_SETUP_CQSIZE,
 				},
 				&queue.Params{
-					Shards:     1,
+					Rings:      1,
 					WaitMethod: queue.WaitEventfd,
 				},
 			)
