@@ -1,6 +1,7 @@
 package fs
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/dshulyak/uring"
@@ -356,4 +358,32 @@ func TestConcurrentWritesIntegrity(t *testing.T) {
 		rst := binary.BigEndian.Uint64(buf2[:])
 		require.Equal(t, i, int64(rst))
 	}
+}
+
+func TestTimeoutReadWriteWithContext(t *testing.T) {
+	queue, err := loop.Setup(1024, nil, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { queue.Close() })
+
+	fsm := NewFilesystem(queue)
+
+	f, err := TempFile(fsm, "test-concurrent-writes", 0)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		os.Remove(f.Name())
+	})
+
+	// deadline can't be time.Time{}, 0 appears tp be ignored by uring.
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(10*time.Nanosecond))
+	defer cancel()
+	buf := aligned(1 << 20)
+	n, err := f.WriteAtContext(ctx, buf, 0)
+	require.Empty(t, n)
+	require.Error(t, err, syscall.ECANCELED)
+
+	ctx, cancel = context.WithDeadline(context.Background(), time.Now().Add(10*time.Nanosecond))
+	defer cancel()
+	n, err = f.ReadAtContext(ctx, buf, 0)
+	require.Empty(t, n)
+	require.Error(t, err, syscall.ECANCELED)
 }
