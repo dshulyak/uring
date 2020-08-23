@@ -166,74 +166,8 @@ func benchmarkOSReadAt(b *testing.B, size int64) {
 }
 
 func BenchmarkWriteAt(b *testing.B) {
-	for _, size := range []int64{8 << 10, 256 << 10, 1 << 20} {
-		b.Run(fmt.Sprintf("uring default %d", size), func(b *testing.B) {
-			q, err := queue.Setup(
-				2048,
-				&uring.IOUringParams{
-					CQEntries: 4096,
-					Flags:     uring.IORING_SETUP_CQSIZE,
-				},
-				nil,
-			)
-			require.NoError(b, err)
-			benchmarkWriteAt(b, q, size, 0)
-		})
-		b.Run(fmt.Sprintf("uring enter %d", size), func(b *testing.B) {
-			q, err := queue.Setup(
-				4096,
-				&uring.IOUringParams{
-					CQEntries: 4 * 4096,
-					Flags:     uring.IORING_SETUP_CQSIZE,
-				},
-				&queue.Params{
-					WaitMethod: queue.WaitEnter,
-				},
-			)
-			require.NoError(b, err)
-			benchmarkWriteAt(b, q, size, 0)
-		})
-		b.Run(fmt.Sprintf("uring poll %d", size), func(b *testing.B) {
-			q, err := queue.Setup(
-				4096,
-				&uring.IOUringParams{
-					CQEntries: 4 * 4096,
-					Flags:     uring.IORING_SETUP_CQSIZE,
-				},
-				&queue.Params{
-					WaitMethod: queue.WaitPoll,
-				},
-			)
-			require.NoError(b, err)
-			benchmarkWriteAt(b, q, size, 0)
-		})
-		b.Run(fmt.Sprintf("os dsync %d", size), func(b *testing.B) {
-			benchmarkOSWriteAt(b, size, unix.O_DSYNC)
-		})
-		b.Run(fmt.Sprintf("os %d", size), func(b *testing.B) {
-			benchmarkOSWriteAt(b, size, 0)
-		})
-	}
-}
-
-func BenchmarkReadAt(b *testing.B) {
-	for _, size := range []int64{512, 4 << 10, 8 << 10, 16 << 10, 64 << 10, 256 << 10, 1 << 20} {
-		b.Run(fmt.Sprintf("uring eventfd %d", size), func(b *testing.B) {
-			q, err := queue.Setup(
-				4096,
-				&uring.IOUringParams{
-					CQEntries: 4 * 4096,
-					Flags:     uring.IORING_SETUP_CQSIZE,
-				},
-				&queue.Params{
-					Rings:      1,
-					WaitMethod: queue.WaitEventfd,
-				},
-			)
-			require.NoError(b, err)
-			benchmarkReadAt(b, q, size)
-		})
-		b.Run(fmt.Sprintf("uring sharded default %d", size), func(b *testing.B) {
+	for _, size := range []int64{512, 4 << 10, 8 << 10, 16 << 10, 64 << 10, 256 << 10} {
+		b.Run(fmt.Sprintf("uring %d", size), func(b *testing.B) {
 			q, err := queue.Setup(
 				512,
 				&uring.IOUringParams{
@@ -243,32 +177,24 @@ func BenchmarkReadAt(b *testing.B) {
 				nil,
 			)
 			require.NoError(b, err)
-			benchmarkReadAt(b, q, size)
+			benchmarkWriteAt(b, q, size, 0)
 		})
-		b.Run(fmt.Sprintf("uring enter %d", size), func(b *testing.B) {
+		b.Run(fmt.Sprintf("os %d", size), func(b *testing.B) {
+			benchmarkOSWriteAt(b, size, 0)
+		})
+	}
+}
+
+func BenchmarkReadAt(b *testing.B) {
+	for _, size := range []int64{512, 4 << 10, 8 << 10, 16 << 10, 64 << 10, 256 << 10} {
+		b.Run(fmt.Sprintf("uring %d", size), func(b *testing.B) {
 			q, err := queue.Setup(
-				4096,
+				512,
 				&uring.IOUringParams{
-					CQEntries: 4 * 4096,
+					CQEntries: 8 * 4096,
 					Flags:     uring.IORING_SETUP_CQSIZE,
 				},
-				&queue.Params{
-					WaitMethod: queue.WaitEnter,
-				},
-			)
-			require.NoError(b, err)
-			benchmarkReadAt(b, q, size)
-		})
-		b.Run(fmt.Sprintf("uring poll %d", size), func(b *testing.B) {
-			q, err := queue.Setup(
-				4096,
-				&uring.IOUringParams{
-					CQEntries: 4 * 4096,
-					Flags:     uring.IORING_SETUP_CQSIZE,
-				},
-				&queue.Params{
-					WaitMethod: queue.WaitPoll,
-				},
+				nil,
 			)
 			require.NoError(b, err)
 			benchmarkReadAt(b, q, size)
