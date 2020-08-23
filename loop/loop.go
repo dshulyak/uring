@@ -1,4 +1,4 @@
-package queue
+package loop
 
 import (
 	"errors"
@@ -43,8 +43,8 @@ type Params struct {
 	Flags      uint
 }
 
-// Queue ...
-type Queue struct {
+// Loop ...
+type Loop struct {
 	qparams *Params
 	// fields are used only if sharding is enabled.
 	queues    []*queue
@@ -56,21 +56,21 @@ type Queue struct {
 }
 
 // Setup setups requested number of shards, with shared kernel worker pool.
-func Setup(size uint, params *uring.IOUringParams, qp *Params) (*Queue, error) {
+func Setup(size uint, params *uring.IOUringParams, qp *Params) (*Loop, error) {
 	if qp == nil {
 		qp = defaultParams()
 	}
 	if qp.Rings > 1 && !(qp.WaitMethod == WaitEventfd || qp.WaitMethod == WaitEnter) {
 		return nil, errors.New("completions can be reaped only by waiting on eventfd if sharding is enabled")
 	}
-	q := &Queue{qparams: qp}
+	q := &Loop{qparams: qp}
 	if qp.Rings > 0 {
 		return q, setupSharded(q, size, params)
 	}
 	return q, setupSimple(q, size, params)
 }
 
-func setupSimple(q *Queue, size uint, params *uring.IOUringParams) error {
+func setupSimple(q *Loop, size uint, params *uring.IOUringParams) error {
 	ring, err := uring.Setup(size, params)
 	if err != nil {
 		return err
@@ -80,7 +80,7 @@ func setupSimple(q *Queue, size uint, params *uring.IOUringParams) error {
 	return nil
 }
 
-func setupSharded(q *Queue, size uint, params *uring.IOUringParams) (err error) {
+func setupSharded(q *Loop, size uint, params *uring.IOUringParams) (err error) {
 	var (
 		queues     = make([]*queue, q.qparams.Rings)
 		paramsCopy uring.IOUringParams
@@ -156,7 +156,7 @@ func setupSharded(q *Queue, size uint, params *uring.IOUringParams) (err error) 
 	return
 }
 
-func (q *Queue) epollLoop() {
+func (q *Loop) epollLoop() {
 	defer q.wg.Done()
 	var exit uint64
 	for {
@@ -174,8 +174,8 @@ func (q *Queue) epollLoop() {
 	}
 }
 
-// getQueue returns queue for current thread.
-func (q *Queue) getQueue() *queue {
+// getLoop returns queue for current thread.
+func (q *Loop) getQueue() *queue {
 	if len(q.queues) == 1 {
 		return q.queues[0]
 	}
@@ -188,14 +188,14 @@ func (q *Queue) getQueue() *queue {
 // Syscall executes operation on one of the internal queues. Additionaly it prevents ptrs from being moved to another location while Syscall is in progress.
 // WARNING: don't use interface that hides this method.
 // https://github.com/golang/go/issues/16035#issuecomment-231107512.
-func (q *Queue) Syscall(opt SQOperation, ptrs ...uintptr) (uring.CQEntry, error) {
+func (q *Loop) Syscall(opt SQOperation, ptrs ...uintptr) (uring.CQEntry, error) {
 	return q.getQueue().Complete(opt)
 }
 
 //go:uintptrescapes
 
 // BatchSyscall ...
-func (q *Queue) BatchSyscall(cqes []uring.CQEntry, opts []SQOperation, ptrs ...uintptr) ([]uring.CQEntry, error) {
+func (q *Loop) BatchSyscall(cqes []uring.CQEntry, opts []SQOperation, ptrs ...uintptr) ([]uring.CQEntry, error) {
 	return q.getQueue().Batch(cqes, opts)
 }
 
@@ -204,7 +204,7 @@ func (q *Queue) BatchSyscall(cqes []uring.CQEntry, opts []SQOperation, ptrs ...u
 // RegisterBuffers will register buffers on all rings (shards). Note that registration
 // is done with syscall, and will have to wait until rings are idle.
 // TODO test if IORING_OP_PROVIDE_BUFFERS is supported (5.7?)
-func (q *Queue) RegisterBuffers(iovec []syscall.Iovec) (err error) {
+func (q *Loop) RegisterBuffers(iovec []syscall.Iovec) (err error) {
 	for _, subq := range q.queues {
 		err = subq.Ring().RegisterBuffers(iovec)
 		if err != nil {
@@ -215,7 +215,7 @@ func (q *Queue) RegisterBuffers(iovec []syscall.Iovec) (err error) {
 }
 
 // RegisterFiles ...
-func (q *Queue) RegisterFiles(fds []int32) (err error) {
+func (q *Loop) RegisterFiles(fds []int32) (err error) {
 	for _, subq := range q.queues {
 		err = subq.Ring().RegisterFiles(fds)
 		if err != nil {
@@ -226,7 +226,7 @@ func (q *Queue) RegisterFiles(fds []int32) (err error) {
 }
 
 // UpdateFiles ...
-func (q *Queue) UpdateFiles(fds []int32, off uint32) (err error) {
+func (q *Loop) UpdateFiles(fds []int32, off uint32) (err error) {
 	for _, subq := range q.queues {
 		err = subq.Ring().UpdateFiles(fds, off)
 		if err != nil {
@@ -237,7 +237,7 @@ func (q *Queue) UpdateFiles(fds []int32, off uint32) (err error) {
 }
 
 // UnregisterFiles ...
-func (q *Queue) UnregisterFiles() (err error) {
+func (q *Loop) UnregisterFiles() (err error) {
 	for _, subq := range q.queues {
 		err = subq.Ring().UnregisterFiles()
 		if err != nil {
@@ -248,7 +248,7 @@ func (q *Queue) UnregisterFiles() (err error) {
 }
 
 // UnregisterBuffers ...
-func (q *Queue) UnregisterBuffers() (err error) {
+func (q *Loop) UnregisterBuffers() (err error) {
 	for _, qu := range q.queues {
 		if err := qu.Ring().UnregisterBuffers(); err != nil {
 			return err
@@ -262,7 +262,7 @@ func (q *Queue) UnregisterBuffers() (err error) {
 // - request close on each queue
 // - once any queue exits - completionLoop will be terminated
 // - once completion loop terminated - unregister eventfd's and close rings
-func (q *Queue) Close() (err0 error) {
+func (q *Loop) Close() (err0 error) {
 	// FIXME use multierr
 	for _, queue := range q.queues {
 		if err := queue.Close(); err != nil && err0 == nil {

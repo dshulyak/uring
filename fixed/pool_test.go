@@ -9,13 +9,14 @@ import (
 	"testing"
 
 	"github.com/dshulyak/uring"
-	"github.com/dshulyak/uring/queue"
+	"github.com/dshulyak/uring/loop"
 	"github.com/stretchr/testify/require"
 )
 
 func TestWrite(t *testing.T) {
-	queue, err := queue.Setup(1024, nil, nil)
-	defer queue.Close()
+	l, err := loop.Setup(1024, nil, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { l.Close() })
 
 	f, err := ioutil.TempFile("", "test")
 	require.NoError(t, err)
@@ -23,14 +24,14 @@ func TestWrite(t *testing.T) {
 
 	n := 100
 	size := 10
-	pool, err := New(queue, size, n)
+	pool, err := New(l, size, n)
 	require.NoError(t, err)
 
 	run := func() {
 		for i := 0; i < n; i++ {
 			buf := pool.Get()
 			defer pool.Put(buf)
-			cqe, err := queue.Syscall(func(sqe *uring.SQEntry) {
+			cqe, err := l.Syscall(func(sqe *uring.SQEntry) {
 				uring.WriteFixed(sqe, f.Fd(), buf.Base(), buf.Len(), 0, 0, buf.Index())
 			})
 			require.NoError(t, err)
@@ -44,9 +45,9 @@ func TestWrite(t *testing.T) {
 }
 
 func TestConcurrentWrites(t *testing.T) {
-	queue, err := queue.Setup(1024, nil, nil)
+	l, err := loop.Setup(1024, nil, nil)
 	require.NoError(t, err)
-	defer queue.Close()
+	t.Cleanup(func() { l.Close() })
 
 	f, err := ioutil.TempFile("", "test-concurrent-writes-")
 	require.NoError(t, err)
@@ -55,7 +56,7 @@ func TestConcurrentWrites(t *testing.T) {
 	var wg sync.WaitGroup
 	var n int64 = 10000
 
-	pool, err := New(queue, 8, int(n))
+	pool, err := New(l, 8, int(n))
 	require.NoError(t, err)
 	for i := int64(0); i < n; i++ {
 		wg.Add(1)
@@ -63,7 +64,7 @@ func TestConcurrentWrites(t *testing.T) {
 			buf := pool.Get()
 			defer pool.Put(buf)
 			binary.BigEndian.PutUint64(buf.Bytes(), i)
-			_, _ = queue.Syscall(func(sqe *uring.SQEntry) {
+			_, _ = l.Syscall(func(sqe *uring.SQEntry) {
 				uring.WriteFixed(sqe, f.Fd(), buf.Base(), buf.Len(), i*8, 0, buf.Index())
 			})
 			wg.Done()
@@ -81,11 +82,11 @@ func TestConcurrentWrites(t *testing.T) {
 }
 
 func BenchmarkPool(b *testing.B) {
-	queue, err := queue.Setup(1024, nil, nil)
+	l, err := loop.Setup(1024, nil, nil)
 	require.NoError(b, err)
-	defer queue.Close()
+	b.Cleanup(func() { l.Close() })
 
-	pool, err := New(queue, 8, 50000)
+	pool, err := New(l, 8, 50000)
 	require.NoError(b, err)
 
 	b.ResetTimer()

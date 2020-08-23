@@ -1,4 +1,4 @@
-package queue
+package loop
 
 import (
 	"runtime"
@@ -14,8 +14,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func TestQueue(t *testing.T) {
-	tester := func(t *testing.T, q *Queue) {
+func TestLoop(t *testing.T) {
+	tester := func(t *testing.T, q *Loop) {
 		t.Cleanup(func() {
 			q.Close()
 		})
@@ -83,7 +83,7 @@ func TestQueue(t *testing.T) {
 }
 
 func TestBatch(t *testing.T) {
-	tester := func(t *testing.T, q *Queue) {
+	tester := func(t *testing.T, q *Loop) {
 		t.Cleanup(func() {
 			q.Close()
 		})
@@ -132,8 +132,8 @@ func TestBatch(t *testing.T) {
 	})
 }
 
-func BenchmarkQueue(b *testing.B) {
-	bench := func(b *testing.B, q *Queue) {
+func BenchmarkLoop(b *testing.B) {
+	bench := func(b *testing.B, q *Loop) {
 		b.Cleanup(func() { q.Close() })
 		var wg sync.WaitGroup
 		b.ResetTimer()
@@ -174,7 +174,7 @@ func BenchmarkQueue(b *testing.B) {
 }
 
 func BenchmarkBatch(b *testing.B) {
-	bench := func(b *testing.B, q *Queue, size int) {
+	bench := func(b *testing.B, q *Loop, size int) {
 		b.Cleanup(func() { q.Close() })
 		var wg sync.WaitGroup
 		b.ResetTimer()

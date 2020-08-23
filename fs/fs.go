@@ -6,7 +6,7 @@ import (
 	"unsafe"
 
 	"github.com/dshulyak/uring"
-	"github.com/dshulyak/uring/queue"
+	"github.com/dshulyak/uring/loop"
 )
 
 const _AT_FDCWD int32 = -0x64
@@ -19,13 +19,13 @@ type FilesystemOption func(*Filesystem)
 // registration module will have to perform two syscalls (unregister files, register files).
 func RegisterFiles(n int) FilesystemOption {
 	return func(fsm *Filesystem) {
-		fsm.fixedFiles = newFixedFiles(fsm.queue, n)
+		fsm.fixedFiles = newFixedFiles(fsm.lp, n)
 	}
 }
 
 // NewFilesystem returns facade for interacting with uring-based filesystem functionality.
-func NewFilesystem(queue *queue.Queue, opts ...FilesystemOption) *Filesystem {
-	fsm := &Filesystem{queue: queue}
+func NewFilesystem(lp *loop.Loop, opts ...FilesystemOption) *Filesystem {
+	fsm := &Filesystem{lp: lp}
 	for _, opt := range opts {
 		opt(fsm)
 	}
@@ -34,7 +34,7 @@ func NewFilesystem(queue *queue.Queue, opts ...FilesystemOption) *Filesystem {
 
 // Filesystem is a facade for all fs-related functionality.
 type Filesystem struct {
-	queue *queue.Queue
+	lp *loop.Loop
 
 	fixedFiles *fixedFiles
 }
@@ -45,7 +45,7 @@ func (fsm *Filesystem) Open(name string, flags int, mode os.FileMode) (*File, er
 	if err != nil {
 		return nil, err
 	}
-	cqe, err := fsm.queue.Syscall(func(sqe *uring.SQEntry) {
+	cqe, err := fsm.lp.Syscall(func(sqe *uring.SQEntry) {
 		uring.Openat(sqe, _AT_FDCWD, _p0, uint32(flags), uint32(mode))
 	}, uintptr(unsafe.Pointer(_p0)))
 
@@ -61,7 +61,7 @@ func (fsm *Filesystem) Open(name string, flags int, mode os.FileMode) (*File, er
 		fd:         fd,
 		ufd:        fd,
 		name:       name,
-		queue:      fsm.queue,
+		lp:         fsm.lp,
 		fixedFiles: fsm.fixedFiles,
 	}
 	if fsm.fixedFiles != nil {

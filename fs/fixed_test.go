@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/dshulyak/uring/queue"
+	"github.com/dshulyak/uring/loop"
 	"github.com/stretchr/testify/require"
 )
 
@@ -24,7 +24,7 @@ func makeFiles(tb testing.TB, n int) []*os.File {
 }
 
 func TestFixedFiles(t *testing.T) {
-	queue, err := queue.Setup(32, nil, nil)
+	queue, err := loop.Setup(32, nil, nil)
 	require.NoError(t, err)
 	defer queue.Close()
 

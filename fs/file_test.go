@@ -14,7 +14,7 @@ import (
 
 	"github.com/dshulyak/uring"
 	"github.com/dshulyak/uring/fixed"
-	"github.com/dshulyak/uring/queue"
+	"github.com/dshulyak/uring/loop"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
 )
@@ -53,7 +53,7 @@ func TestFixedBuffersIO(t *testing.T) {
 		require.Equal(t, in.B, out.B)
 	}
 	t.Run("registered", func(t *testing.T) {
-		q, err := queue.Setup(32, nil, nil)
+		q, err := loop.Setup(32, nil, nil)
 		require.NoError(t, err)
 		t.Cleanup(func() { q.Close() })
 		fsm := NewFilesystem(q, RegisterFiles(32))
@@ -63,7 +63,7 @@ func TestFixedBuffersIO(t *testing.T) {
 		tester(t, fsm, pool)
 	})
 	t.Run("unregistered", func(t *testing.T) {
-		q, err := queue.Setup(32, nil, nil)
+		q, err := loop.Setup(32, nil, nil)
 		require.NoError(t, err)
 		t.Cleanup(func() { q.Close() })
 		fsm := NewFilesystem(q)
@@ -92,14 +92,14 @@ func TestRegularIO(t *testing.T) {
 		require.Equal(t, in, out)
 	}
 	t.Run("registered", func(t *testing.T) {
-		q, err := queue.Setup(32, nil, nil)
+		q, err := loop.Setup(32, nil, nil)
 		require.NoError(t, err)
 		t.Cleanup(func() { q.Close() })
 		fsm := NewFilesystem(q, RegisterFiles(32))
 		tester(t, fsm)
 	})
 	t.Run("unregistered", func(t *testing.T) {
-		q, err := queue.Setup(32, nil, nil)
+		q, err := loop.Setup(32, nil, nil)
 		require.NoError(t, err)
 		t.Cleanup(func() { q.Close() })
 		fsm := NewFilesystem(q)
@@ -168,7 +168,7 @@ func benchmarkOSReadAt(b *testing.B, size int64) {
 func BenchmarkWriteAt(b *testing.B) {
 	for _, size := range []int64{512, 4 << 10, 8 << 10, 16 << 10, 64 << 10, 256 << 10} {
 		b.Run(fmt.Sprintf("uring %d", size), func(b *testing.B) {
-			q, err := queue.Setup(
+			q, err := loop.Setup(
 				512,
 				&uring.IOUringParams{
 					CQEntries: 8 * 4096,
@@ -188,7 +188,7 @@ func BenchmarkWriteAt(b *testing.B) {
 func BenchmarkReadAt(b *testing.B) {
 	for _, size := range []int64{512, 4 << 10, 8 << 10, 16 << 10, 64 << 10, 256 << 10} {
 		b.Run(fmt.Sprintf("uring %d", size), func(b *testing.B) {
-			q, err := queue.Setup(
+			q, err := loop.Setup(
 				512,
 				&uring.IOUringParams{
 					CQEntries: 8 * 4096,
@@ -205,7 +205,7 @@ func BenchmarkReadAt(b *testing.B) {
 	}
 }
 
-func benchmarkWriteAt(b *testing.B, q *queue.Queue, size int64, fflags int) {
+func benchmarkWriteAt(b *testing.B, q *loop.Loop, size int64, fflags int) {
 	b.Cleanup(func() { q.Close() })
 	fsm := NewFilesystem(q)
 
@@ -235,7 +235,7 @@ func benchmarkWriteAt(b *testing.B, q *queue.Queue, size int64, fflags int) {
 	wg.Wait()
 }
 
-func benchmarkReadAt(b *testing.B, q *queue.Queue, size int64) {
+func benchmarkReadAt(b *testing.B, q *loop.Loop, size int64) {
 	b.Cleanup(func() {
 		q.Close()
 	})
@@ -287,7 +287,7 @@ func benchmarkReadAt(b *testing.B, q *queue.Queue, size int64) {
 }
 
 func TestEmptyWrite(t *testing.T) {
-	queue, err := queue.Setup(1024, nil, nil)
+	queue, err := loop.Setup(1024, nil, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { queue.Close() })
 
@@ -305,7 +305,7 @@ func TestEmptyWrite(t *testing.T) {
 }
 
 func TestClose(t *testing.T) {
-	queue, err := queue.Setup(8, nil, nil)
+	queue, err := loop.Setup(8, nil, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { queue.Close() })
 
@@ -323,7 +323,7 @@ func TestClose(t *testing.T) {
 }
 
 func TestConcurrentWritesIntegrity(t *testing.T) {
-	queue, err := queue.Setup(1024, nil, nil)
+	queue, err := loop.Setup(1024, nil, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { queue.Close() })
 
