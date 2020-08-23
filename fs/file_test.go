@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -168,41 +167,7 @@ func benchmarkOSReadAt(b *testing.B, size int64) {
 
 func BenchmarkWriteAt(b *testing.B) {
 	for _, size := range []int64{8 << 10, 256 << 10, 1 << 20} {
-		b.Run(fmt.Sprintf("uring sharded rr dsync %d", size), func(b *testing.B) {
-			q, err := queue.Setup(
-				128,
-				&uring.IOUringParams{
-					CQEntries: 4096,
-					Flags:     uring.IORING_SETUP_CQSIZE,
-				},
-				&queue.Params{
-					// in this case 50 is the number of workers used by uring
-					Shards:           50,
-					ShardingStrategy: queue.ShardingRoundRobin,
-					WaitMethod:       queue.WaitEventfd,
-				},
-			)
-			require.NoError(b, err)
-			benchmarkWriteAt(b, q, size, unix.O_DSYNC)
-		})
-		b.Run(fmt.Sprintf("uring sharded rr %d", size), func(b *testing.B) {
-			q, err := queue.Setup(
-				2048,
-				&uring.IOUringParams{
-					CQEntries: 4096,
-					Flags:     uring.IORING_SETUP_CQSIZE,
-				},
-				&queue.Params{
-					// in this case 50 is the number of workers used by uring
-					Shards:           50,
-					ShardingStrategy: queue.ShardingRoundRobin,
-					WaitMethod:       queue.WaitEventfd,
-				},
-			)
-			require.NoError(b, err)
-			benchmarkWriteAt(b, q, size, 0)
-		})
-		b.Run(fmt.Sprintf("uring sharded default %d", size), func(b *testing.B) {
+		b.Run(fmt.Sprintf("uring default %d", size), func(b *testing.B) {
 			q, err := queue.Setup(
 				2048,
 				&uring.IOUringParams{
@@ -253,40 +218,6 @@ func BenchmarkWriteAt(b *testing.B) {
 
 func BenchmarkReadAt(b *testing.B) {
 	for _, size := range []int64{512, 4 << 10, 8 << 10, 16 << 10, 64 << 10, 256 << 10, 1 << 20} {
-		b.Run(fmt.Sprintf("uring sharded rr %d", size), func(b *testing.B) {
-			q, err := queue.Setup(
-				2048,
-				&uring.IOUringParams{
-					CQEntries: 4096,
-					Flags:     uring.IORING_SETUP_CQSIZE,
-				},
-				&queue.Params{
-					// in this case 50 is the number of workers created by uring
-					Shards:           50,
-					ShardingStrategy: queue.ShardingRoundRobin,
-					WaitMethod:       queue.WaitEventfd,
-				},
-			)
-			require.NoError(b, err)
-			benchmarkReadAt(b, q, size)
-		})
-		b.Run(fmt.Sprintf("uring sharded enter %d", size), func(b *testing.B) {
-			q, err := queue.Setup(
-				256,
-				&uring.IOUringParams{
-					CQEntries: 4 * 4096,
-					Flags:     uring.IORING_SETUP_CQSIZE,
-				},
-				&queue.Params{
-					Shards:           uint(runtime.NumCPU()),
-					ShardingStrategy: queue.ShardingRoundRobin,
-					WaitMethod:       queue.WaitEnter,
-					Flags:            queue.FlagSharedWorkers,
-				},
-			)
-			require.NoError(b, err)
-			benchmarkReadAt(b, q, size)
-		})
 		b.Run(fmt.Sprintf("uring eventfd %d", size), func(b *testing.B) {
 			q, err := queue.Setup(
 				4096,

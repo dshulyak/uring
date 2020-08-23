@@ -5,17 +5,9 @@ import (
 	"fmt"
 	"runtime"
 	"sync"
-	"sync/atomic"
 	"syscall"
 
 	"github.com/dshulyak/uring"
-)
-
-const (
-	// ShardingThreadID shares work based on thread id.
-	ShardingThreadID uint = iota
-	// ShardingRoundRobin shares shares work in round robin.
-	ShardingRoundRobin
 )
 
 const (
@@ -38,19 +30,17 @@ const (
 
 func defaultParams() *Params {
 	return &Params{
-		Shards:           uint(runtime.NumCPU()),
-		ShardingStrategy: ShardingThreadID,
-		WaitMethod:       WaitEventfd,
-		Flags:            FlagSharedWorkers,
+		Shards:     uint(runtime.NumCPU()),
+		WaitMethod: WaitEventfd,
+		Flags:      FlagSharedWorkers,
 	}
 }
 
 // Params ...
 type Params struct {
-	Shards           uint
-	ShardingStrategy uint
-	WaitMethod       uint
-	Flags            uint
+	Shards     uint
+	WaitMethod uint
+	Flags      uint
 }
 
 // Queue ...
@@ -61,8 +51,6 @@ type Queue struct {
 	n         uint64
 	byEventfd map[int32]*queue
 	poll      *poll
-	// order is used only if queue operates in round robin mode
-	order uint64
 
 	// queue should be used if sharding is disabled.
 	queue *queue
@@ -198,14 +186,7 @@ func (q *Queue) getQueue() *queue {
 	if len(q.queues) == 1 {
 		return q.queues[0]
 	}
-	var tid uint64
-	if q.qparams.ShardingStrategy == ShardingThreadID {
-		tid = uint64(syscall.Gettid())
-	} else if q.qparams.ShardingStrategy == ShardingRoundRobin {
-		tid = atomic.AddUint64(&q.order, 1)
-	} else {
-		panic("sharded queue must use ShardingThreadID or ShardingRoundRobin")
-	}
+	tid := uint64(syscall.Gettid())
 	return q.queues[tid%q.n]
 }
 

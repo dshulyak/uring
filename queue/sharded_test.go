@@ -70,28 +70,8 @@ func TestQueue(t *testing.T) {
 	})
 	t.Run("sharded enter", func(t *testing.T) {
 		q, err := Setup(1024, nil, &Params{
-			Shards:           uint(runtime.NumCPU()),
-			ShardingStrategy: ShardingThreadID,
-			WaitMethod:       WaitEnter,
-		})
-		require.NoError(t, err)
-		tester(t, q)
-	})
-	t.Run("round robin", func(t *testing.T) {
-		q, err := Setup(1024, nil, &Params{
-			Shards:           6,
-			WaitMethod:       WaitEventfd,
-			ShardingStrategy: ShardingRoundRobin,
-		})
-		require.NoError(t, err)
-		tester(t, q)
-	})
-	t.Run("round robin shared", func(t *testing.T) {
-		q, err := Setup(1024, nil, &Params{
-			Shards:           6,
-			WaitMethod:       WaitEventfd,
-			ShardingStrategy: ShardingRoundRobin,
-			Flags:            FlagSharedWorkers,
+			Shards:     uint(runtime.NumCPU()),
+			WaitMethod: WaitEnter,
 		})
 		require.NoError(t, err)
 		tester(t, q)
@@ -140,9 +120,8 @@ func TestBatch(t *testing.T) {
 	})
 	t.Run("sharded enter", func(t *testing.T) {
 		q, err := Setup(1024, nil, &Params{
-			Shards:           uint(runtime.NumCPU()),
-			ShardingStrategy: ShardingThreadID,
-			WaitMethod:       WaitEnter,
+			Shards:     uint(runtime.NumCPU()),
+			WaitMethod: WaitEnter,
 		})
 		require.NoError(t, err)
 		tester(t, q)
@@ -181,10 +160,9 @@ func BenchmarkQueue(b *testing.B) {
 			CQEntries: 2 * 4096,
 			Flags:     uring.IORING_SETUP_CQSIZE,
 		}, &Params{
-			Shards:           uint(runtime.NumCPU()),
-			ShardingStrategy: ShardingThreadID,
-			WaitMethod:       WaitEnter,
-			Flags:            FlagSharedWorkers,
+			Shards:     uint(runtime.NumCPU()),
+			WaitMethod: WaitEnter,
+			Flags:      FlagSharedWorkers,
 		})
 		require.NoError(b, err)
 		bench(b, q)
