@@ -222,6 +222,7 @@ func BenchmarkBatch(b *testing.B) {
 func TestTimeoutNoOverwrite(t *testing.T) {
 	q, err := Setup(2, nil, &Params{Rings: 1, WaitMethod: WaitEventfd})
 	require.NoError(t, err)
+	t.Cleanup(func() { q.Close() })
 	// we are testing here that the result we used for timeout will not be overwritten by nop.
 	// timeout operation executes long enough (10ms), for results array to wrap around
 	tchan := make(chan struct{})
@@ -242,5 +243,35 @@ func TestTimeoutNoOverwrite(t *testing.T) {
 	case <-tchan:
 	case <-time.After(10 * time.Second):
 		require.FailNow(t, "timed out")
+	}
+}
+
+func TestLinkedBatch(t *testing.T) {
+	q, err := Setup(64, nil, &Params{Rings: 1, WaitMethod: WaitEventfd})
+	require.NoError(t, err)
+	t.Cleanup(func() { q.Close() })
+
+	result := make(chan []uring.CQEntry)
+	go func() {
+		wait := unix.Timespec{Sec: 10}
+		timeout := unix.Timespec{Nsec: 10_000}
+		cqes, err := q.BatchSyscall(nil, []SQOperation{
+			func(sqe *uring.SQEntry) {
+				uring.Timeout(sqe, &wait, false, 0)
+				sqe.SetFlags(uring.IOSQE_IO_LINK)
+			},
+			func(sqe *uring.SQEntry) {
+				uring.LinkTimeout(sqe, &timeout, false)
+			},
+		}, uintptr(unsafe.Pointer(&wait)), uintptr(unsafe.Pointer(&timeout)))
+		require.NoError(t, err)
+		result <- cqes
+	}()
+	select {
+	case <-time.After(time.Second):
+		require.FailNow(t, "failed to interrupt waiter")
+	case cqes := <-result:
+		assert.Equal(t, syscall.ECANCELED.Error(), syscall.Errno(-cqes[0].Result()).Error())
+		assert.Equal(t, syscall.ETIME.Error(), syscall.Errno(-cqes[1].Result()).Error())
 	}
 }
