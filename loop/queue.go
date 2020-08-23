@@ -67,7 +67,15 @@ type queue struct {
 
 	wg sync.WaitGroup
 
-	rmu     sync.Mutex
+	// results is a free-list with a static size,
+	// it is twice as large as a cq. we provide a guarantee that no more
+	// than cq size of entries are inflight at the same time, it means that any
+	// particular result will be reused only after cq number of entries were completed.
+	// if it happens that some submissions are stuck in the queue, then we can reuse
+	// associated result.
+	// In the worst case performance of the results array will be O(n),
+	// but for it to happen we need to have submission that can take longer to complete
+	// then all other submissions in the queue cumulatively.
 	results []*result
 
 	inflight, limit uint32
@@ -85,22 +93,11 @@ func (q *queue) completionLoop() {
 	}
 }
 
-//go:norace
-// results is a free-list with a static size,
-// it is twice as large as a cq. we provide a guarantee that no more
-// than cq size of entries are inflight at the same time, it means that any
-// particular result will be reused only after cq number of entries were completed.
-// if it happens that some submissions are stuck in the queue, then we can reuse
-// associated result.
-// In the worst case performance of the results array will be O(n),
-// but for it to happen we need to have submission that can take longer to complete
-// then all other submissions in the queue cumulatively.
-
 func (q *queue) tryComplete() bool {
 	cqe, err := q.ring.GetCQEntry(q.minComplete)
 	// EAGAIN - if head is equal to tail of completion queue
 	if err == syscall.EAGAIN || err == syscall.EINTR {
-		//gosched is needed if q.minComplete = 0 without eventfd
+		// gosched is needed if q.minComplete = 0 without eventfd
 		runtime.Gosched()
 		return true
 	} else if err != nil {
@@ -159,6 +156,9 @@ func (q *queue) fillResult(sqe *uring.SQEntry) *result {
 	for {
 		pos := q.nonce % uint32(len(q.results))
 		res = q.results[pos]
+		// this is always in race with update to true after wait
+		// but technically it will lead only to false negative which will
+		// lead to skipped result, which is not a problem at all
 		if res.free {
 			break
 		}
@@ -181,6 +181,8 @@ func (q *queue) submit(n uint32) error {
 func (q *queue) Ring() *uring.Ring {
 	return q.ring
 }
+
+//go:norace
 
 // Complete blocks until an available submission exists, submits and blocks until completed.
 // Goroutine that executes Complete will be parked.
@@ -210,6 +212,8 @@ func (q *queue) Complete(opt SQOperation) (uring.CQEntry, error) {
 	}
 	return cqe, nil
 }
+
+//go:norace
 
 // Batch submits operations atomically and in the order they are provided.
 func (q *queue) Batch(cqes []uring.CQEntry, opts []SQOperation) ([]uring.CQEntry, error) {
