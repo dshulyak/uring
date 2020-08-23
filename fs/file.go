@@ -140,6 +140,8 @@ func (f *File) ReadAtContext(ctx context.Context, buf []byte, off int64) (int, e
 }
 
 // WriteAtFixed ...
+// FIXME(dshulyak) write after canceled write will hang
+// see https://github.com/axboe/liburing/issues/179
 func (f *File) WriteAtFixed(b *fixed.Buffer, off int64) (int, error) {
 	if b.Len() == 0 {
 		return 0, nil

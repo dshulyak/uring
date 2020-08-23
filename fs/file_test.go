@@ -361,11 +361,11 @@ func TestConcurrentWritesIntegrity(t *testing.T) {
 }
 
 func TestTimeoutReadWriteWithContext(t *testing.T) {
-	queue, err := loop.Setup(1024, nil, nil)
+	q, err := loop.Setup(64, nil, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { queue.Close() })
+	t.Cleanup(func() { q.Close() })
 
-	fsm := NewFilesystem(queue)
+	fsm := NewFilesystem(q)
 
 	f, err := TempFile(fsm, "test-concurrent-writes", 0)
 	require.NoError(t, err)
@@ -373,17 +373,21 @@ func TestTimeoutReadWriteWithContext(t *testing.T) {
 		os.Remove(f.Name())
 	})
 
-	// deadline can't be time.Time{}, 0 appears tp be ignored by uring.
-	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(10*time.Nanosecond))
+	// deadline can't be time.Time{}, 0 will not simply cancel operation
+	// timeout must be valid
+
+	buf := make([]byte, 1<<20)
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(5*time.Nanosecond))
 	defer cancel()
-	buf := aligned(1 << 20)
-	n, err := f.WriteAtContext(ctx, buf, 0)
+
+	n, err := f.ReadAtContext(ctx, buf, 0)
 	require.Empty(t, n)
 	require.Error(t, err, syscall.ECANCELED)
 
-	ctx, cancel = context.WithDeadline(context.Background(), time.Now().Add(10*time.Nanosecond))
+	ctx, cancel = context.WithDeadline(context.Background(), time.Now().Add(5*time.Nanosecond))
 	defer cancel()
-	n, err = f.ReadAtContext(ctx, buf, 0)
+
+	n, err = f.WriteAtContext(ctx, buf, 0)
 	require.Empty(t, n)
 	require.Error(t, err, syscall.ECANCELED)
 }
