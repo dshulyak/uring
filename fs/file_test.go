@@ -228,9 +228,12 @@ func benchmarkWriteAt(b *testing.B, q *loop.Loop, size int64, fflags int) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := f.WriteAt(buf, atomic.AddInt64(&offset, size)-size)
+			n, err := f.WriteAt(buf, atomic.AddInt64(&offset, size)-size)
 			if err != nil {
 				b.Error(err)
+			}
+			if n != len(buf) {
+				b.Errorf("short write %d < %d", n, len(buf))
 			}
 		}()
 	}
