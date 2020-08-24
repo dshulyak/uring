@@ -270,21 +270,29 @@ func benchmarkReadAt(b *testing.B, q *loop.Loop, size int64) {
 
 	var wg sync.WaitGroup
 
+	c := 20_000
+	quo, rem := b.N/c, b.N%c
+
 	b.SetBytes(int64(size))
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for w := 0; w < b.N; w++ {
+	for i := 0; i < c; i++ {
 		wg.Add(1)
+		n := quo
+		if i < rem {
+			n = quo + 1
+		}
 		go func() {
 			defer wg.Done()
-			off := atomic.AddInt64(&offset, size) - size
-			n, err := f.ReadAt(buf, off)
-			if err != nil {
-				b.Error(err)
-			}
-			if n != int(size) {
-				b.Errorf("short read %v off %v", n, off)
+			for j := 0; j < n; j++ {
+				rn, err := f.ReadAt(buf, atomic.AddInt64(&offset, size)-size)
+				if err != nil {
+					b.Error(err)
+				}
+				if rn != len(buf) {
+					b.Errorf("short read %d != %d", rn, len(buf))
+				}
 			}
 		}()
 	}
