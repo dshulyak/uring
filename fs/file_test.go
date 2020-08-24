@@ -273,6 +273,7 @@ func benchmarkReadAt(b *testing.B, q *loop.Loop, size int64) {
 	c := 20_000
 	quo, rem := b.N/c, b.N%c
 
+	var retries uint64
 	b.SetBytes(int64(size))
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -295,11 +296,13 @@ func benchmarkReadAt(b *testing.B, q *loop.Loop, size int64) {
 					if rn == len(buf) {
 						break
 					}
+					atomic.AddUint64(&retries, 1)
 				}
 			}
 		}()
 	}
 	wg.Wait()
+	fmt.Println("retries: ", retries)
 }
 
 func TestEmptyWrite(t *testing.T) {
