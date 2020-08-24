@@ -4,6 +4,17 @@ Golang library for io_uring framework (without CGO)
 io_uring is the new kernel interface for asynchronous IO. The best introduction is
 [io_uring intro](https://kernel.dk/io_uring.pdf).
 
+Benchmarks
+===
+
+Benchmarks are collected on 5.8.3 kernel, ext4 and old ssd drive. File is opened with O_DIRECT.
+
+BenchmarkReadAt/uring_512-8              8000000              1879 ns/op         272.55 MB/s
+BenchmarkReadAt/uring_8192-8             1000000             18178 ns/op         450.65 MB/s
+
+BenchmarkReadAt/os_512-256               8000000              4393 ns/op         116.55 MB/s
+BenchmarkReadAt/os_8192-256              1000000             18811 ns/op         435.48 MB/s
+
 Implementation
 ===
 
@@ -84,4 +95,4 @@ Several weak points of this approach are:
 - Submissions are not batched (syscall per operation).
   However this can be improved with a batch API.
 
-By introducing uring into the runtime directly we can decrease overhead even futher, by removing syscall.Gettid, removing sq synchronization, and improving gopark/goread efficiency (if compared with waiting on channel).
+By introducing uring into the runtime directly we can decrease overhead even futher, by removing syscall.Gettid, removing sq synchronization, and improving gopark/goready efficiency (if compared with waiting on channel).
