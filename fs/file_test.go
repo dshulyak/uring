@@ -286,12 +286,15 @@ func benchmarkReadAt(b *testing.B, q *loop.Loop, size int64) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < n; j++ {
-				rn, err := f.ReadAt(buf, atomic.AddInt64(&offset, size)-size)
-				if err != nil {
-					b.Error(err)
-				}
-				if rn != len(buf) {
-					b.Errorf("short read %d != %d", rn, len(buf))
+				off := atomic.AddInt64(&offset, size) - size
+				for {
+					rn, err := f.ReadAt(buf, off)
+					if err != nil {
+						b.Error(err)
+					}
+					if rn == len(buf) {
+						break
+					}
 				}
 			}
 		}()
