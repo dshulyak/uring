@@ -10,9 +10,11 @@ Benchmarks
 Benchmarks are collected on 5.8.3 kernel, ext4 and old ssd drive. File is opened with O_DIRECT.
 
 BenchmarkReadAt/uring_512-8              8000000              1879 ns/op         272.55 MB/s
+
 BenchmarkReadAt/uring_8192-8             1000000             18178 ns/op         450.65 MB/s
 
 BenchmarkReadAt/os_512-256               8000000              4393 ns/op         116.55 MB/s
+
 BenchmarkReadAt/os_8192-256              1000000             18811 ns/op         435.48 MB/s
 
 Implementation
@@ -86,6 +88,16 @@ It must be possible to achieve the same without heap allocation (e.g. the same w
 Submissions queue requires synchronization if used concurrently by multiple goroutines. It leads to contention with large number of CPU's. The natural way to avoid contetion is to setup ring per thread, io_uring provides handy flag IORING_SETUP_ATTACH_WQ that allows to share same kernel pool between multiple rings.
 
 On linux we can use syscall.Gettid efficiently to assign work to a particular ring in a way that minimizes contetion. Completions can be reapeted by registering eventfd for every ring, and watching all of them with single epoll instance. It is critical to ensure that completion path doesn't use any synchronization as the performance plumets if it does.
+
+Another potential unsafe improvement is to link procPin from runtime. And use it in the place of syscall.Gettid, it removes 150ns from the path and yields noticeabe benchmark improvements.
+
+```go
+//go:linkname procPin runtime.procPin
+func procPin() int
+
+//go:linkname procUnpin runtime.procUnpin
+func procUnpin() int
+```
 
 In runtime we can use gopark/goready directly, however this is not available outside of the runtime and I had to use simple channel for notifying submitter on completion. This works nicely and doesn't introduce a lot of overhead. This whole approach in general adds ~750ns with high submition rate (includes spawning goroutine, submitting nop uring operation, and waiting for completion).
 
