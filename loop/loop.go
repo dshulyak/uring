@@ -7,6 +7,9 @@ import (
 	"sync"
 	"syscall"
 
+	// for go:linkname
+	_ "unsafe"
+
 	"github.com/dshulyak/uring"
 )
 
@@ -179,8 +182,8 @@ func (q *Loop) getQueue() *queue {
 	if len(q.queues) == 1 {
 		return q.queues[0]
 	}
-	tid := uint64(syscall.Gettid())
-	return q.queues[tid%q.n]
+	defer procUnpin()
+	return q.queues[procPin()%int(q.n)]
 }
 
 //go:uintptrescapes
@@ -286,3 +289,9 @@ func (q *Loop) Close() (err0 error) {
 	}
 	return err0
 }
+
+//go:linkname procPin runtime.procPin
+func procPin() int
+
+//go:linkname procUnpin runtime.procUnpin
+func procUnpin() int
