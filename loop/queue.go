@@ -27,6 +27,7 @@ func newResult() *result {
 
 // result is an object for sending completion notifications.
 type result struct {
+	w waiter
 	uring.CQEntry
 	ch    chan struct{}
 	free  bool
@@ -111,7 +112,7 @@ func (q *queue) tryComplete() bool {
 
 	req := q.results[cqe.UserData()%uint64(len(q.results))]
 	req.CQEntry = cqe
-	req.ch <- struct{}{}
+	req.w.signal()
 	return true
 }
 
@@ -167,6 +168,7 @@ func (q *queue) fillResult(sqe *uring.SQEntry) *result {
 	}
 	res.free = false
 	res.nonce = q.nonce
+	res.w.add()
 
 	sqe.SetUserData(uint64(q.nonce))
 	q.nonce++
@@ -205,16 +207,13 @@ func (q *queue) Complete(opt SQOperation) (uring.CQEntry, error) {
 	}
 
 	// wait
-	_, open := <-res.ch
+	res.w.wait()
 	cqe := res.CQEntry
 	if cqe.UserData() != uint64(res.nonce) {
 		panic("received result for a wrong request")
 	}
 	res.free = true
 	q.completed(1)
-	if !open {
-		return uring.CQEntry{}, ErrClosed
-	}
 	return cqe, nil
 }
 
