@@ -218,26 +218,19 @@ func benchmarkWriteAt(b *testing.B, q *loop.Loop, size int64, fflags int) {
 	offset := int64(0)
 	buf := make([]byte, size)
 
-	var wg sync.WaitGroup
-
 	b.SetBytes(int64(size))
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for w := 0; w < b.N; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			n, err := f.WriteAt(buf, atomic.AddInt64(&offset, size)-size)
-			if err != nil {
-				b.Error(err)
-			}
-			if n != len(buf) {
-				b.Errorf("short write %d < %d", n, len(buf))
-			}
-		}()
-	}
-	wg.Wait()
+	runConcurrently(20_000, b.N, func() {
+		n, err := f.WriteAt(buf, atomic.AddInt64(&offset, size)-size)
+		if err != nil {
+			b.Error(err)
+		}
+		if n != len(buf) {
+			b.Errorf("short write %d < %d", n, len(buf))
+		}
+	})
 }
 
 func runConcurrently(c, n int, f func()) {
