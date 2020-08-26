@@ -19,13 +19,15 @@ func TestLoop(t *testing.T) {
 		t.Cleanup(func() {
 			q.Close()
 		})
+		r := 100
+		iter := 1000
 		var wg sync.WaitGroup
-		results := make(chan uring.CQEntry, 10000)
-		for i := 0; i < 100; i++ {
+		results := make(chan uring.CQEntry, r*iter)
+		for i := 0; i < r; i++ {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				for j := 0; j < 100; j++ {
+				for j := 0; j < iter; j++ {
 					cqe, err := q.Syscall(func(sqe *uring.SQEntry) {
 						uring.Nop(sqe)
 					})
@@ -42,7 +44,7 @@ func TestLoop(t *testing.T) {
 		for _ = range results {
 			count++
 		}
-		require.Equal(t, count, 10000)
+		require.Equal(t, r*iter, count)
 	}
 
 	t.Run("default", func(t *testing.T) {
@@ -151,7 +153,7 @@ func BenchmarkLoop(b *testing.B) {
 		}
 		wg.Wait()
 	}
-	b.Run("sharded default", func(b *testing.B) {
+	b.Run("default", func(b *testing.B) {
 		q, err := Setup(128, &uring.IOUringParams{
 			CQEntries: 2 * 4096,
 			Flags:     uring.IORING_SETUP_CQSIZE,
@@ -159,7 +161,7 @@ func BenchmarkLoop(b *testing.B) {
 		require.NoError(b, err)
 		bench(b, q)
 	})
-	b.Run("sharded enter", func(b *testing.B) {
+	b.Run("enter", func(b *testing.B) {
 		q, err := Setup(128, &uring.IOUringParams{
 			CQEntries: 2 * 4096,
 			Flags:     uring.IORING_SETUP_CQSIZE,
