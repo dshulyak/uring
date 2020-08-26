@@ -240,6 +240,25 @@ func benchmarkWriteAt(b *testing.B, q *loop.Loop, size int64, fflags int) {
 	wg.Wait()
 }
 
+func runConcurrently(c, n int, f func()) {
+	var wg sync.WaitGroup
+	quo, rem := n/c, n%c
+	for i := 0; i < c; i++ {
+		wg.Add(1)
+		n := quo
+		if i < rem {
+			n = quo + 1
+		}
+		go func() {
+			defer wg.Done()
+			for j := 0; j < n; j++ {
+				f()
+			}
+		}()
+	}
+	wg.Wait()
+}
+
 func benchmarkReadAt(b *testing.B, q *loop.Loop, size int64) {
 	b.Cleanup(func() {
 		q.Close()
@@ -268,38 +287,21 @@ func benchmarkReadAt(b *testing.B, q *loop.Loop, size int64) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	var wg sync.WaitGroup
-
-	c := 20_000
-	quo, rem := b.N/c, b.N%c
-
 	b.SetBytes(int64(size))
 	b.ReportAllocs()
 	b.ResetTimer()
-
-	for i := 0; i < c; i++ {
-		wg.Add(1)
-		n := quo
-		if i < rem {
-			n = quo + 1
-		}
-		go func() {
-			defer wg.Done()
-			for j := 0; j < n; j++ {
-				off := atomic.AddInt64(&offset, size) - size
-				for {
-					rn, err := f.ReadAt(buf, off)
-					if err != nil {
-						b.Error(err)
-					}
-					if rn == len(buf) {
-						break
-					}
-				}
+	runConcurrently(20_000, b.N, func() {
+		off := atomic.AddInt64(&offset, size) - size
+		for {
+			rn, err := f.ReadAt(buf, off)
+			if err != nil {
+				b.Error(err)
 			}
-		}()
-	}
-	wg.Wait()
+			if rn == len(buf) {
+				break
+			}
+		}
+	})
 }
 
 func TestEmptyWrite(t *testing.T) {
