@@ -20,7 +20,6 @@ var (
 
 func newResult() *result {
 	return &result{
-		ch:   make(chan struct{}, 1),
 		free: true,
 	}
 }
@@ -29,7 +28,6 @@ func newResult() *result {
 type result struct {
 	w waiter
 	uring.CQEntry
-	ch    chan struct{}
 	free  bool
 	nonce uint32
 }
@@ -235,19 +233,11 @@ func (q *queue) Batch(cqes []uring.CQEntry, opts []SQOperation) ([]uring.CQEntry
 	if err := q.submit(n); err != nil {
 		return nil, err
 	}
-	exit := false
 	for _, res := range results {
-		_, open := <-res.ch
+		res.w.wait()
 		res.free = true
 		q.completed(1)
-		if !open {
-			exit = true
-			continue
-		}
 		cqes = append(cqes, res.CQEntry)
-	}
-	if exit {
-		return nil, ErrClosed
 	}
 	return cqes, nil
 }
@@ -265,13 +255,9 @@ func (q *queue) Close() error {
 
 	_, err := q.ring.Submit(0)
 	if err != nil {
-		//FIXME
 		return err
 	}
 	q.wg.Wait()
-	for _, req := range q.results {
-		close(req.ch)
-	}
 	q.results = nil
 	return nil
 }
