@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -193,11 +194,24 @@ func BenchmarkReadAt(b *testing.B) {
 			q, err := loop.Setup(
 				512,
 				&uring.IOUringParams{
-					CQEntries: 8 * 4096,
+					CQEntries: 2 * 4096,
 					Flags:     uring.IORING_SETUP_CQSIZE,
 				},
 				nil,
 			)
+			require.NoError(b, err)
+			benchmarkReadAt(b, q, size)
+		})
+
+		b.Run(fmt.Sprintf("enter %d", size), func(b *testing.B) {
+			q, err := loop.Setup(512, &uring.IOUringParams{
+				CQEntries: 2 * 4096,
+				Flags:     uring.IORING_SETUP_CQSIZE,
+			}, &loop.Params{
+				Rings:      runtime.NumCPU(),
+				WaitMethod: loop.WaitEnter,
+				Flags:      loop.FlagSharedWorkers,
+			})
 			require.NoError(b, err)
 			benchmarkReadAt(b, q, size)
 		})
