@@ -4,6 +4,10 @@ Golang library for io_uring framework (without CGO)
 io_uring is the new kernel interface for asynchronous IO. The best introduction is
 [io_uring intro](https://kernel.dk/io_uring.pdf).
 
+Note that this library is mostly tested on 5.8.* kernel. While the core of this library
+doesn't use any of the newer features and will work on the kernel with io_uring that
+supports flags IORING_SETUP_CQSIZE and IORING_SETUP_ATTACH_WQ, and supports notifications with eventfd (IORING_REGISTER_EVENTFD) - some of the tests will depend on the latest features and will probably fail with cryptic errors if run on the kernel that doesn't support those features.
+
 Benchmarks
 ===
 
