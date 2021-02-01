@@ -1,7 +1,6 @@
 package fs
 
 import (
-	"context"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -9,7 +8,6 @@ import (
 	"github.com/dshulyak/uring"
 	"github.com/dshulyak/uring/fixed"
 	"github.com/dshulyak/uring/loop"
-	"golang.org/x/sys/unix"
 )
 
 func ioRst(cqe uring.CQEntry, err error) (int, error) {
@@ -87,56 +85,6 @@ func (f *File) ReadAt(buf []byte, off int64) (int, error) {
 		uring.Readv(sqe, f.ufd, iovec, uint64(off), 0)
 		sqe.SetFlags(f.flags)
 	}, uintptr(unsafe.Pointer(&iovec[0]))))
-}
-
-// WriteAtContext will cancel write operation if it wasn't started until deadline or timeout in context.
-func (f *File) WriteAtContext(ctx context.Context, buf []byte, off int64) (int, error) {
-	if len(buf) == 0 {
-		return 0, nil
-	}
-	deadline, ok := ctx.Deadline()
-	if !ok {
-		return f.WriteAt(buf, off)
-	}
-	timeout := unix.Timespec{Nsec: int64(deadline.Nanosecond())}
-	iovec := []syscall.Iovec{{Base: &buf[0], Len: uint64(len(buf))}}
-	cqes, err := f.lp.BatchSyscall(nil, []loop.SQOperation{
-		func(sqe *uring.SQEntry) {
-			uring.Writev(sqe, f.ufd, iovec, uint64(off), 0)
-			sqe.SetFlags(uring.IOSQE_IO_LINK)
-		},
-		func(sqe *uring.SQEntry) {
-			uring.LinkTimeout(sqe, &timeout, true)
-		},
-	},
-		uintptr(unsafe.Pointer(&iovec[0])), uintptr(unsafe.Pointer(&timeout)),
-	)
-	return ioRst(cqes[0], err)
-}
-
-// ReadAtContext will cancel read operation if it wasn't started until deadline or timeout in context.
-func (f *File) ReadAtContext(ctx context.Context, buf []byte, off int64) (int, error) {
-	if len(buf) == 0 {
-		return 0, nil
-	}
-	deadline, ok := ctx.Deadline()
-	if !ok {
-		return f.ReadAt(buf, off)
-	}
-	timeout := unix.Timespec{Nsec: int64(deadline.Nanosecond())}
-	iovec := []syscall.Iovec{{Base: &buf[0], Len: uint64(len(buf))}}
-	cqes, err := f.lp.BatchSyscall(nil, []loop.SQOperation{
-		func(sqe *uring.SQEntry) {
-			uring.Readv(sqe, f.ufd, iovec, uint64(off), 0)
-			sqe.SetFlags(uring.IOSQE_IO_LINK)
-		},
-		func(sqe *uring.SQEntry) {
-			uring.LinkTimeout(sqe, &timeout, true)
-		},
-	},
-		uintptr(unsafe.Pointer(&iovec[0])), uintptr(unsafe.Pointer(&timeout)),
-	)
-	return ioRst(cqes[0], err)
 }
 
 // WriteAtFixed ...
