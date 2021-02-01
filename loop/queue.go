@@ -223,6 +223,9 @@ func (q *queue) Complete(opt SQOperation) (uring.CQEntry, error) {
 // Batch submits operations atomically and in the order they are provided.
 func (q *queue) Batch(cqes []uring.CQEntry, opts []SQOperation) ([]uring.CQEntry, error) {
 	n := uint32(len(opts))
+	// lock is acqured in prepare and released in submit guarantees
+	// that operations are sent in order. e.g. no other goroutine can concurrently
+	// chime in due to runtime.Gosched in getSQEntry
 	if err := q.prepare(n); err != nil {
 		return nil, err
 	}
