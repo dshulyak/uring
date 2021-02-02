@@ -139,3 +139,9 @@ func (f *File) Datasync() error {
 	}
 	return nil
 }
+
+// Write ...
+type Write struct {
+	Buf    []byte
+	Offset uint64
+}

@@ -54,7 +54,7 @@ func newQueue(ring *uring.Ring, qp *Params) *queue {
 	if qp.WaitMethod == WaitEnter {
 		minComplete = 1
 	}
-	results := make([]*result, ring.CQSize()*2)
+	results := make([]*result, ring.CQSize())
 	for i := range results {
 		results[i] = newResult()
 	}
@@ -91,7 +91,9 @@ type queue struct {
 	// then all other submissions in the queue cumulatively.
 	results []*result
 
-	inflight, limit uint32
+	inflight uint32
+	// completion queue size
+	limit uint32
 }
 
 func (q *queue) startCompletionLoop() {
