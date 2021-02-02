@@ -20,17 +20,29 @@ var (
 
 func newResult() *result {
 	return &result{
-		ch:   make(chan struct{}, 1),
-		free: true,
+		ch: make(chan struct{}, 1),
 	}
 }
 
 // result is an object for sending completion notifications.
 type result struct {
-	uring.CQEntry
-	ch    chan struct{}
-	free  bool
+	free  uint32
 	nonce uint32
+
+	uring.CQEntry
+	ch chan struct{}
+}
+
+func (r *result) isFree() bool {
+	return atomic.LoadUint32(&r.free) == 0
+}
+
+func (r *result) unfree() {
+	atomic.StoreUint32(&r.free, 1)
+}
+
+func (r *result) setFree() {
+	atomic.StoreUint32(&r.free, 0)
 }
 
 type SQOperation func(sqe *uring.SQEntry)
@@ -160,12 +172,12 @@ func (q *queue) fillResult(sqe *uring.SQEntry) *result {
 		// this is always in race with update to true after wait
 		// but technically it will lead only to false negative which will
 		// lead to skipped result, which is not a problem at all
-		if res.free {
+		if res.isFree() {
 			break
 		}
 		q.nonce++
 	}
-	res.free = false
+	res.unfree()
 	res.nonce = q.nonce
 
 	sqe.SetUserData(uint64(q.nonce))
@@ -210,7 +222,14 @@ func (q *queue) Complete(opt SQOperation) (uring.CQEntry, error) {
 	if cqe.UserData() != uint64(res.nonce) {
 		panic("received result for a wrong request")
 	}
-	res.free = true
+
+	// fillResult method always checks if result is free by atomically loading
+	// free marker. on x86 write is never reordered with older reads
+	// but on systems with less strong memory model it might be possible
+	//
+	// in this part i rely on store/release - load/acquire semantics
+	// to enforce earlier described contstraint
+	res.setFree()
 	q.completed(1)
 	if !open {
 		return uring.CQEntry{}, ErrClosed
@@ -242,7 +261,7 @@ func (q *queue) Batch(cqes []uring.CQEntry, opts []SQOperation) ([]uring.CQEntry
 	exit := false
 	for _, res := range results {
 		_, open := <-res.ch
-		res.free = true
+		res.setFree()
 		q.completed(1)
 		if !open {
 			exit = true
