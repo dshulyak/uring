@@ -80,15 +80,11 @@ type queue struct {
 
 	wg sync.WaitGroup
 
-	// results is a free-list with a static size,
-	// it is twice as large as a cq. we provide a guarantee that no more
-	// than cq size of entries are inflight at the same time, it means that any
-	// particular result will be reused only after cq number of entries were completed.
-	// if it happens that some submissions are stuck in the queue, then we can reuse
-	// associated result.
-	// In the worst case performance of the results array will be O(n),
-	// but for it to happen we need to have submission that can take longer to complete
-	// then all other submissions in the queue cumulatively.
+	// results is a free-list with a static size.
+	// it is as large as completion queue.
+	// it will happen that some completions will be faster than other,
+	// in such case complexity of getting free result will grow from O(1) to O(n)
+	// worst case
 	results []*result
 
 	inflight uint32
@@ -171,9 +167,6 @@ func (q *queue) fillResult(sqe *uring.SQEntry) *result {
 	for {
 		pos := q.nonce % uint32(len(q.results))
 		res = q.results[pos]
-		// this is always in race with update to true after wait
-		// but technically it will lead only to false negative which will
-		// lead to skipped result, which is not a problem at all
 		if res.isFree() {
 			break
 		}
