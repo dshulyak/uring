@@ -17,7 +17,7 @@ Benchmarks for reading 40gb file are collected on 5.8.15 kernel, ext4 and Samsun
 
 - 16 rings (one per core) with shared kernel workers
 - one thread per ring to reap completions (faster than single thread with epoll and eventfd's)
-- 4096 submition queue size
+- 4096 submission queue size
 - 8192 completion queue size
 - 100 000 concurrent readers
 
@@ -39,11 +39,11 @@ Implementation
 
 #### memory ordering (atomics)
 
-liburing is using atomics to guarantee that write to submission queue will be visible by the kernel when sq tail is updated, and vice versa with head for completions.
+io_uring relies on StoreRelease/ReadAcquire atomic semantics to guarantee that submitted entries will be visible after by the kernel when sq tail is updated, and vice verse for completed and cq head.
 
-Golang atomics provide stronger guarantees ([#1](https://github.com/golang/go/issues/32428),[#2](https://github.com/golang/go/issues/35639)) than what is necessary, however this guarantees are not explicitly specified and may change unexpectadly. It is very unlikely that it will happen in a way that will break this library, but it may.
+Based on comments ([#1](https://github.com/golang/go/issues/32428),[#2](https://github.com/golang/go/issues/35639)) golang provides sufficient guarantees (actually stronger) for this to work. However i wasn't able to find any mention in memory model specification so it is a subject to change, but highly unlikely.
 
-Also, runtime/internal/atomic module has implementation for weaker atomics that provide exactly memory_order_release and memory_order_acquire. You can link them using `go:linkname` pragma, but it is not safe, nobody wants about it and it doesn't provide any noticeable perf improvements to justify this hack.
+Also, runtime/internal/atomic module has implementation for weaker atomics that provide exactly StoreRelease and ReadAcquire. You can link them using `go:linkname` pragma, but it is not safe, nobody wants about it and it doesn't provide any noticeable perf improvements to justify this hack.
 
 ```go
 //go:linkname LoadAcq runtime/internal/atomic.LoadAcq
@@ -68,7 +68,7 @@ func Writev(sqe *SQEntry, fd uintptr, iovec []syscall.Iovec, offset uint64, flag
 }
 ```
 
-In this example sqe.addr may become invalid right after Writev helper returns. In order to lock pointer in place there is hidden pragma `go:uintptrescapes`.
+In this example `sqe.addr` may become invalid right after Writev helper returns. In order to lock pointer in place there is hidden pragma `go:uintptrescapes`.
 
 ```go
 //go:uintptrescapes
@@ -116,7 +116,7 @@ func procPin() int
 func procUnpin() int
 ```
 
-In runtime we can use gopark/goready directly, however this is not available outside of the runtime and I had to use simple channel for notifying submitter on completion. This works nicely and doesn't introduce a lot of overhead. This whole approach in general adds ~750ns with high submition rate (includes spawning goroutine, submitting nop uring operation, and waiting for completion).
+In runtime we can use gopark/goready directly, however this is not available outside of the runtime and I had to use simple channel for notifying submitter on completion. This works nicely and doesn't introduce a lot of overhead. This whole approach in general adds ~750ns with high submission rate (includes spawning goroutine, submitting nop uring operation, and waiting for completion).
 
 Several weak points of this approach are:
 
