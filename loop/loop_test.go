@@ -19,8 +19,8 @@ func TestLoop(t *testing.T) {
 		t.Cleanup(func() {
 			q.Close()
 		})
-		r := 100
-		iter := 1000
+		r := 1024
+		iter := 100
 		var wg sync.WaitGroup
 		results := make(chan uring.CQEntry, r*iter)
 		for i := 0; i < r; i++ {
@@ -136,7 +136,9 @@ func TestBatch(t *testing.T) {
 
 func BenchmarkLoop(b *testing.B) {
 	bench := func(b *testing.B, q *Loop) {
-		b.Cleanup(func() { q.Close() })
+		b.Cleanup(func() {
+			q.Close()
+		})
 		var wg sync.WaitGroup
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -154,7 +156,7 @@ func BenchmarkLoop(b *testing.B) {
 		wg.Wait()
 	}
 	b.Run("default", func(b *testing.B) {
-		q, err := Setup(128, &uring.IOUringParams{
+		q, err := Setup(2048, &uring.IOUringParams{
 			CQEntries: 2 * 4096,
 			Flags:     uring.IORING_SETUP_CQSIZE,
 		}, nil)
@@ -162,7 +164,7 @@ func BenchmarkLoop(b *testing.B) {
 		bench(b, q)
 	})
 	b.Run("enter", func(b *testing.B) {
-		q, err := Setup(128, &uring.IOUringParams{
+		q, err := Setup(2048, &uring.IOUringParams{
 			CQEntries: 2 * 4096,
 			Flags:     uring.IORING_SETUP_CQSIZE,
 		}, &Params{

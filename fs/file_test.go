@@ -190,7 +190,7 @@ func BenchmarkReadAt(b *testing.B) {
 	for _, size := range []int64{512, 4 << 10, 8 << 10, 16 << 10, 64 << 10, 256 << 10} {
 		b.Run(fmt.Sprintf("uring %d", size), func(b *testing.B) {
 			q, err := loop.Setup(
-				512,
+				4096,
 				&uring.IOUringParams{
 					CQEntries: 2 * 4096,
 					Flags:     uring.IORING_SETUP_CQSIZE,
@@ -202,14 +202,17 @@ func BenchmarkReadAt(b *testing.B) {
 		})
 
 		b.Run(fmt.Sprintf("enter %d", size), func(b *testing.B) {
-			q, err := loop.Setup(512, &uring.IOUringParams{
-				CQEntries: 2 * 4096,
-				Flags:     uring.IORING_SETUP_CQSIZE,
-			}, &loop.Params{
-				Rings:      runtime.NumCPU(),
-				WaitMethod: loop.WaitEnter,
-				Flags:      loop.FlagSharedWorkers,
-			})
+			q, err := loop.Setup(
+				4096,
+				&uring.IOUringParams{
+					CQEntries: 2 * 4096,
+					Flags:     uring.IORING_SETUP_CQSIZE,
+				}, &loop.Params{
+					Rings:      runtime.NumCPU(),
+					WaitMethod: loop.WaitEnter,
+					Flags:      loop.FlagSharedWorkers,
+				},
+			)
 			require.NoError(b, err)
 			benchmarkReadAt(b, q, size)
 		})
@@ -274,6 +277,7 @@ func benchmarkReadAt(b *testing.B, q *loop.Loop, size int64) {
 	f, err := TempFile(fsm, "testing-fs-file-", unix.O_DIRECT)
 	require.NoError(b, err)
 	b.Cleanup(func() {
+		f.Close()
 		os.Remove(f.Name())
 	})
 
@@ -295,7 +299,7 @@ func benchmarkReadAt(b *testing.B, q *loop.Loop, size int64) {
 	b.SetBytes(int64(size))
 	b.ReportAllocs()
 	b.ResetTimer()
-	runConcurrently(20_000, b.N, func() {
+	runConcurrently(100_000, b.N, func() {
 		off := atomic.AddInt64(&offset, size) - size
 		for {
 			rn, err := f.ReadAt(buf, off)

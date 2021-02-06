@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/dshulyak/uring"
 )
@@ -58,13 +59,19 @@ func newQueue(ring *uring.Ring, qp *Params) *queue {
 	for i := range results {
 		results[i] = newResult()
 	}
-	return &queue{
+	subLock := sync.Mutex{}
+
+	q := &queue{
 		ring:        ring,
 		signal:      make(chan struct{}, 1),
 		results:     results,
 		limit:       ring.CQSize(),
+		submitLimit: ring.SQSize(),
+		submitEvent: sync.NewCond(&subLock),
 		minComplete: minComplete,
 	}
+	q.startSubmitLoop()
+	return q
 }
 
 // queue provides thread safe access to uring.Ring instance.
@@ -90,6 +97,68 @@ type queue struct {
 	inflight uint32
 	// completion queue size
 	limit uint32
+
+	// submission queue size
+	submitLimit uint32
+
+	submitEvent  *sync.Cond
+	submitCount  uint32
+	submitCloser chan error
+}
+
+func (q *queue) startSubmitLoop() {
+	q.wg.Add(1)
+
+	var (
+		duration = 50 * time.Microsecond
+		timeout  = false
+
+		timer = time.AfterFunc(duration, func() {
+			q.submitEvent.L.Lock()
+			timeout = true
+			q.submitEvent.Signal()
+			q.submitEvent.L.Unlock()
+		})
+	)
+	go func() {
+		defer q.wg.Done()
+		defer timer.Stop()
+		for {
+			q.submitEvent.L.Lock()
+
+			// event is fired:
+			// - when queue is full
+			// - on timer
+			// - when queue is closed
+
+			for q.submitCount != q.submitLimit && !timeout && q.submitCloser == nil {
+				q.submitEvent.Wait()
+			}
+			total := q.submitCount
+			timed := timeout
+			closed := q.submitCloser
+
+			timeout = false
+			q.submitCount = 0
+			q.submitEvent.L.Unlock()
+
+			if closed != nil {
+				closed <- nil
+				return
+			}
+
+			if total > 0 {
+				_, err := q.ring.Enter(total, 0)
+				if err != nil {
+					panic(err)
+				}
+			}
+			if !timed {
+				timer.Stop()
+			}
+			timer.Reset(duration)
+		}
+	}()
 }
 
 func (q *queue) startCompletionLoop() {
@@ -144,8 +213,9 @@ func (q *queue) prepare(n uint32) error {
 }
 
 func (q *queue) getSQEntry() *uring.SQEntry {
-	// in general sq entry will be available without looping
-	// but in case of SQPOLL we may need to wait here
+	// we will wait if submition queue is full.
+	// it won't be long cause if it is full submition loop receives
+	// event to submit pending immediatly.
 	for {
 		entry := q.ring.GetSQEntry()
 		if entry != nil {
@@ -180,6 +250,20 @@ func (q *queue) fillResult(sqe *uring.SQEntry) *result {
 	return res
 }
 
+func (q *queue) submitAsync(n uint32) error {
+	q.submitEvent.L.Lock()
+	q.submitCount += n
+	if q.submitCount == q.submitLimit {
+		q.submitEvent.Signal()
+	}
+	closed := q.submitCloser != nil
+	q.submitEvent.L.Unlock()
+	if closed {
+		return ErrClosed
+	}
+	return nil
+}
+
 func (q *queue) submit(n uint32) error {
 	q.ring.Flush()
 	q.mu.Unlock()
@@ -205,12 +289,14 @@ func (q *queue) Complete(opt SQOperation) (uring.CQEntry, error) {
 	sqe := q.getSQEntry()
 	opt(sqe)
 	res := q.fillResult(sqe)
+	q.ring.Flush()
 
-	// submit to uring
-	if err := q.submit(1); err != nil {
+	err := q.submitAsync(1)
+	q.mu.Unlock()
+
+	if err != nil {
 		return uring.CQEntry{}, err
 	}
-
 	// wait
 	_, open := <-res.ch
 	cqe := res.CQEntry
@@ -249,10 +335,14 @@ func (q *queue) Batch(cqes []uring.CQEntry, opts []SQOperation) ([]uring.CQEntry
 		opts[i](sqe)
 		results[i] = q.fillResult(sqe)
 	}
+	q.ring.Flush()
 
-	if err := q.submit(n); err != nil {
+	err := q.submitAsync(n)
+	q.mu.Unlock()
+	if err != nil {
 		return nil, err
 	}
+
 	exit := false
 	for _, res := range results {
 		_, open := <-res.ch
@@ -276,6 +366,13 @@ func (q *queue) Close() error {
 	q.mu.Unlock()
 	close(q.signal)
 
+	q.submitEvent.L.Lock()
+	q.submitCloser = make(chan error, 1)
+	q.submitEvent.Signal()
+	q.submitEvent.L.Unlock()
+
+	<-q.submitCloser
+
 	sqe := q.ring.GetSQEntry()
 	uring.Nop(sqe)
 	sqe.SetUserData(closed)
@@ -283,7 +380,6 @@ func (q *queue) Close() error {
 
 	_, err := q.ring.Submit(0)
 	if err != nil {
-		//FIXME
 		return err
 	}
 	q.wg.Wait()

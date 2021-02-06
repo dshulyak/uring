@@ -11,15 +11,28 @@ supports flags IORING_SETUP_CQSIZE and IORING_SETUP_ATTACH_WQ, and supports noti
 Benchmarks
 ===
 
-Benchmarks are collected on 5.8.3 kernel, ext4 and old ssd drive. File is opened with O_DIRECT.
+Benchmarks for reading 40gb file are collected on 5.8.15 kernel, ext4 and Samsung EVO 960. File is opened with O_DIRECT. Benchmarks are comparing the fastest way to read a file using optimal strategies with io_uring or os.
 
-BenchmarkReadAt/uring_512-8              8000000              1879 ns/op         272.55 MB/s
+#### io_uring
 
-BenchmarkReadAt/uring_8192-8             1000000             18178 ns/op         450.65 MB/s
+- 16 rings (one per core) with shared kernel workers
+- one thread per ring to reap completions (faster than single thread with epoll and eventfd's)
+- 4096 submition queue size
+- 8192 completion queue size
+- 100 000 concurrent readers
 
-BenchmarkReadAt/os_512-256               8000000              4393 ns/op         116.55 MB/s
+```
+BenchmarkReadAt/enter_4096-16            5000000          1709 ns/op	2397.39 MB/s          34 B/op          2 allocs/op
 
-BenchmarkReadAt/os_8192-256              1000000             18811 ns/op         435.48 MB/s
+```
+
+#### os
+
+- 128 os threads (more than that hurts performance)
+
+```
+BenchmarkReadAt/os_4096-128              5000000          1901 ns/op	2154.84 MB/s           0 B/op          0 allocs/op
+```
 
 Implementation
 ===
