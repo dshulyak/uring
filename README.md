@@ -104,9 +104,9 @@ It must be possible to achieve the same without heap allocation (e.g. the same w
 
 Submissions queue requires synchronization if used concurrently by multiple goroutines. It leads to contention with large number of CPU's. The natural way to avoid contetion is to setup ring per thread, io_uring provides handy flag IORING_SETUP_ATTACH_WQ that allows to share same kernel pool between multiple rings.
 
-On linux we can use syscall.Gettid efficiently to assign work to a particular ring in a way that minimizes contetion. Completions can be reapeted by registering eventfd for every ring, and watching all of them with single epoll instance. It is critical to ensure that completion path doesn't use any synchronization as the performance plumets if it does.
+On linux we can use syscall.Gettid efficiently to assign work to a particular ring in a way that minimizes contetion. It is also critical to ensure that completion path doesn't have to synchronize with submission, as it introductes noticeable degradation.
 
-Another potential unsafe improvement is to link procPin from runtime. And use it in the place of syscall.Gettid, it removes 150ns from the path and yields noticeabe benchmark improvements.
+Another potential unsafe improvement is to link procPin from runtime. And use it in the place of syscall.Gettid, my last benchmark shows no difference (maybe couple ns not in favor of procPing/procUnpin).
 
 ```go
 //go:linkname procPin runtime.procPin
