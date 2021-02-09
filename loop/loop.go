@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/dshulyak/uring"
 )
@@ -26,21 +27,31 @@ const (
 const (
 	// FlagSharedWorkers shares worker pool from the first ring instance between all shards in the queue.
 	FlagSharedWorkers = 1 << iota
+
+	// FlagBatchSubmission enables feature to batch individual submission together
+	// in one syscall. If this flag is set SubmissionTimer option must be set as well.
+	FlagBatchSubmission
+)
+
+const (
+	defaultBatchSubmissionTimer = 50 * time.Microsecond
 )
 
 func defaultParams() *Params {
 	return &Params{
-		Rings:      runtime.NumCPU(),
-		WaitMethod: WaitEventfd,
-		Flags:      FlagSharedWorkers,
+		Rings:           runtime.NumCPU(),
+		WaitMethod:      WaitEventfd,
+		Flags:           FlagSharedWorkers | FlagBatchSubmission,
+		SubmissionTimer: defaultBatchSubmissionTimer,
 	}
 }
 
 // Params ...
 type Params struct {
-	Rings      int
-	WaitMethod uint
-	Flags      uint
+	Rings           int
+	WaitMethod      uint
+	Flags           uint
+	SubmissionTimer time.Duration
 }
 
 // Loop ...
@@ -61,7 +72,11 @@ func Setup(size uint, params *uring.IOUringParams, qp *Params) (*Loop, error) {
 		qp = defaultParams()
 	}
 	if qp.Rings > 1 && !(qp.WaitMethod == WaitEventfd || qp.WaitMethod == WaitEnter) {
-		return nil, errors.New("completions can be reaped only by waiting on eventfd if sharding is enabled")
+		return nil, errors.New("use WaitEventfd or WaitEnter if sharding is enabled")
+	} else if qp.Flags&FlagBatchSubmission != 0 && qp.SubmissionTimer == 0 {
+		return nil, errors.New("SubmissionTimer must be non zero if FlagBatchSubmission is used")
+	} else if qp.Flags&FlagBatchSubmission == 0 && qp.SubmissionTimer != 0 {
+		return nil, errors.New("SubmissionTimer erroneously set to non-zero")
 	}
 	q := &Loop{qparams: qp}
 	if qp.Rings > 0 {

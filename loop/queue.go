@@ -13,7 +13,7 @@ import (
 
 var (
 	// ErrClosed returned if queue was closed.
-	ErrClosed = errors.New("closed")
+	ErrClosed = errors.New("uring: closed")
 	// closed is a bit set to sqe.userData to notify completionLoop that ring
 	// is being closed.
 	closed uint64 = 1 << 63
@@ -62,13 +62,14 @@ func newQueue(ring *uring.Ring, qp *Params) *queue {
 	subLock := sync.Mutex{}
 
 	q := &queue{
-		ring:        ring,
-		signal:      make(chan struct{}, 1),
-		results:     results,
-		limit:       ring.CQSize(),
-		submitLimit: ring.SQSize(),
-		submitEvent: sync.NewCond(&subLock),
-		minComplete: minComplete,
+		ring:            ring,
+		submissionTimer: qp.SubmissionTimer,
+		signal:          make(chan struct{}, 1),
+		results:         results,
+		limit:           ring.CQSize(),
+		submitLimit:     ring.SQSize(),
+		submitEvent:     sync.NewCond(&subLock),
+		minComplete:     minComplete,
 	}
 	q.startSubmitLoop()
 	return q
@@ -78,6 +79,8 @@ func newQueue(ring *uring.Ring, qp *Params) *queue {
 type queue struct {
 	ring        *uring.Ring
 	minComplete uint32
+
+	submissionTimer time.Duration
 
 	mu     sync.Mutex
 	nonce  uint32
@@ -107,10 +110,13 @@ type queue struct {
 }
 
 func (q *queue) startSubmitLoop() {
+	if q.submissionTimer == 0 {
+		return
+	}
 	q.wg.Add(1)
 
 	var (
-		duration = 50 * time.Microsecond
+		duration = q.submissionTimer
 		timeout  = false
 
 		timer = time.AfterFunc(duration, func() {
@@ -250,7 +256,16 @@ func (q *queue) fillResult(sqe *uring.SQEntry) *result {
 	return res
 }
 
-func (q *queue) submitAsync(n uint32) error {
+func (q *queue) submit(n uint32) error {
+	q.ring.Flush()
+	if q.submissionTimer == 0 {
+		// for sync submit unlock before enter
+		q.mu.Unlock()
+		_, err := q.ring.Enter(n, 0)
+		return err
+	}
+	// for async submit unlock after notifying batch submitter
+	defer q.mu.Unlock()
 	q.submitEvent.L.Lock()
 	q.submitCount += n
 	if q.submitCount == q.submitLimit {
@@ -262,13 +277,6 @@ func (q *queue) submitAsync(n uint32) error {
 		return ErrClosed
 	}
 	return nil
-}
-
-func (q *queue) submit(n uint32) error {
-	q.ring.Flush()
-	q.mu.Unlock()
-	_, err := q.ring.Enter(n, 0)
-	return err
 }
 
 func (q *queue) Ring() *uring.Ring {
@@ -289,11 +297,8 @@ func (q *queue) Complete(opt SQOperation) (uring.CQEntry, error) {
 	sqe := q.getSQEntry()
 	opt(sqe)
 	res := q.fillResult(sqe)
-	q.ring.Flush()
 
-	err := q.submitAsync(1)
-	q.mu.Unlock()
-
+	err := q.submit(1)
 	if err != nil {
 		return uring.CQEntry{}, err
 	}
@@ -335,10 +340,8 @@ func (q *queue) Batch(cqes []uring.CQEntry, opts []SQOperation) ([]uring.CQEntry
 		opts[i](sqe)
 		results[i] = q.fillResult(sqe)
 	}
-	q.ring.Flush()
 
-	err := q.submitAsync(n)
-	q.mu.Unlock()
+	err := q.submit(n)
 	if err != nil {
 		return nil, err
 	}
@@ -366,12 +369,14 @@ func (q *queue) Close() error {
 	q.mu.Unlock()
 	close(q.signal)
 
-	q.submitEvent.L.Lock()
-	q.submitCloser = make(chan error, 1)
-	q.submitEvent.Signal()
-	q.submitEvent.L.Unlock()
+	if q.submissionTimer != 0 {
+		q.submitEvent.L.Lock()
+		q.submitCloser = make(chan error, 1)
+		q.submitEvent.Signal()
+		q.submitEvent.L.Unlock()
 
-	<-q.submitCloser
+		<-q.submitCloser
+	}
 
 	sqe := q.ring.GetSQEntry()
 	uring.Nop(sqe)

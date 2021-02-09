@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/dshulyak/uring"
@@ -208,9 +209,10 @@ func BenchmarkReadAt(b *testing.B) {
 					CQEntries: 2 * 4096,
 					Flags:     uring.IORING_SETUP_CQSIZE,
 				}, &loop.Params{
-					Rings:      runtime.NumCPU(),
-					WaitMethod: loop.WaitEnter,
-					Flags:      loop.FlagSharedWorkers,
+					Rings:           runtime.NumCPU(),
+					WaitMethod:      loop.WaitEnter,
+					Flags:           loop.FlagSharedWorkers | loop.FlagBatchSubmission,
+					SubmissionTimer: 50 * time.Microsecond,
 				},
 			)
 			require.NoError(b, err)
